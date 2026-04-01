@@ -2,6 +2,8 @@
 
 A high-performance streaming log beautifier for the terminal. Transform raw JSON logs into human-readable, colorized output with support for multi-line stack traces and customizable field mapping.
 
+**[中文版本](README.zh-CN.md)** | **[English](README.md)**
+
 [![Rust](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
