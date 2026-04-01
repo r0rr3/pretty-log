@@ -5,7 +5,7 @@ class PrettyLog < Formula
   license "MIT"
 
   on_macos do
-    on_arm64 do
+    on_arm do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-apple-darwin.tar.gz"
       sha256 "a96cbdd8ae724b4b3dedfc979e1820a53aa7802c23f7733d0ecec0454697913e"
     end
@@ -16,7 +16,7 @@ class PrettyLog < Formula
   end
 
   on_linux do
-    on_arm64 do
+    on_arm do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "d30aa13981e684a90862a64d23c0c34dd72613e7067f07adbbe0930ef48feea9"
     end
