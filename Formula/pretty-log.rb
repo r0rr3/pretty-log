@@ -7,22 +7,22 @@ class PrettyLog < Formula
   on_macos do
     on_arm64 do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-apple-darwin.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_GITHUB_ACTIONS"
+      sha256 "WILL_BE_UPDATED_BY_CI"
     end
     on_intel do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-x86_64-apple-darwin.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_GITHUB_ACTIONS"
+      sha256 "WILL_BE_UPDATED_BY_CI"
     end
   end
 
   on_linux do
     on_arm64 do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_GITHUB_ACTIONS"
+      sha256 "WILL_BE_UPDATED_BY_CI"
     end
     on_intel do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_GITHUB_ACTIONS"
+      sha256 "WILL_BE_UPDATED_BY_CI"
     end
   end
 
@@ -32,7 +32,7 @@ class PrettyLog < Formula
 
   test do
     output = shell_output("echo '{\"level\":\"info\",\"msg\":\"hello\"}' | #{bin}/pretty --no-color")
-    assert_match /INFO/, output
-    assert_match /hello/, output
+    assert_match "INFO", output
+    assert_match "hello", output
   end
 end

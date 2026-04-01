@@ -9,156 +9,127 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  create-release:
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-    steps:
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-  build-and-upload:
-    needs: create-release
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          # macOS x86_64
-          - os: macos-latest
+          # Intel Mac — must use macos-13 (x86_64 runner)
+          - os: macos-13
             target: x86_64-apple-darwin
-            artifact_name: pretty
             asset_name: pretty-log-x86_64-apple-darwin.tar.gz
 
-          # macOS ARM64 (Apple Silicon)
+          # Apple Silicon — macos-latest is now ARM64 (M1/M2)
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: pretty
             asset_name: pretty-log-aarch64-apple-darwin.tar.gz
 
-          # Linux x86_64
+          # Linux x86_64 — native
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: pretty
             asset_name: pretty-log-x86_64-unknown-linux-gnu.tar.gz
 
-          # Linux ARM64
+          # Linux ARM64 — cross-compile with `cross`
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            artifact_name: pretty
             asset_name: pretty-log-aarch64-unknown-linux-gnu.tar.gz
+            use_cross: true
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross (for ARM64 on Linux)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Install cross (Linux ARM64 only)
+        if: ${{ matrix.use_cross == true }}
         run: cargo install cross
 
-      - name: Build (using cargo)
-        if: matrix.target != 'aarch64-unknown-linux-gnu'
+      - name: Build
+        if: ${{ matrix.use_cross != true }}
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Build (using cross for ARM64 on Linux)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Build with cross
+        if: ${{ matrix.use_cross == true }}
         run: cross build --release --target ${{ matrix.target }}
 
-      - name: Prepare artifacts
-        run: |
-          mkdir -p release_assets
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }}.exe release_assets/
-            cd release_assets
-            7z a ${{ matrix.asset_name }} ${{ matrix.artifact_name }}.exe
-          else
-            cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release_assets/
-            cd release_assets
-            tar czf ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
-          fi
+      - name: Package binary
         shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/pretty ./pretty
+          tar czf ${{ matrix.asset_name }} pretty
 
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./release_assets/${{ matrix.asset_name }}
-          asset_name: ${{ matrix.asset_name }}
-          asset_content_type: application/gzip
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
 
-  update-homebrew-formula:
-    needs: build-and-upload
+  release:
+    needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v3
+      # Checkout main branch so we can commit the updated formula back
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download all artifacts
-        run: |
-          mkdir -p artifacts
-          cd artifacts
-          # Download all release assets
-          gh release download ${{ github.ref_name }} --dir .
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release and upload binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Calculate SHA256 hashes
-        run: |
-          cd artifacts
-          sha256sum pretty-log-x86_64-apple-darwin.tar.gz > checksums.txt
-          sha256sum pretty-log-aarch64-apple-darwin.tar.gz >> checksums.txt
-          sha256sum pretty-log-x86_64-unknown-linux-gnu.tar.gz >> checksums.txt
-          sha256sum pretty-log-aarch64-unknown-linux-gnu.tar.gz >> checksums.txt
-          cat checksums.txt
-
-      - name: Generate updated formula
+      - name: Update Homebrew formula
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "Version: $VERSION"
 
-          SHA256_X86_DARWIN=$(sha256sum artifacts/pretty-log-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
-          SHA256_ARM_DARWIN=$(sha256sum artifacts/pretty-log-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
-          SHA256_X86_LINUX=$(sha256sum artifacts/pretty-log-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
-          SHA256_ARM_LINUX=$(sha256sum artifacts/pretty-log-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          SHA_X86_MAC=$(sha256sum artifacts/pretty-log-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
+          SHA_ARM_MAC=$(sha256sum artifacts/pretty-log-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          SHA_X86_LNX=$(sha256sum artifacts/pretty-log-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          SHA_ARM_LNX=$(sha256sum artifacts/pretty-log-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
 
-          cat > Formula/pretty-log.rb << 'EOF'
+          # Unquoted heredoc: bash expands ${VERSION} and ${SHA_*},
+          # but leaves #{bin} intact for Ruby to interpret
+          cat > Formula/pretty-log.rb << EOF
 class PrettyLog < Formula
   desc "A fast log prettifier for JSON logs with streaming support"
   homepage "https://github.com/r0rr3/pretty-log"
-  version "VERSION_PLACEHOLDER"
+  version "${VERSION}"
   license "MIT"
 
   on_macos do
     on_arm64 do
-      url "https://github.com/r0rr3/pretty-log/releases/download/vVERSION_PLACEHOLDER/pretty-log-aarch64-apple-darwin.tar.gz"
-      sha256 "SHA256_ARM_DARWIN_PLACEHOLDER"
+      url "https://github.com/r0rr3/pretty-log/releases/download/v${VERSION}/pretty-log-aarch64-apple-darwin.tar.gz"
+      sha256 "${SHA_ARM_MAC}"
     end
     on_intel do
-      url "https://github.com/r0rr3/pretty-log/releases/download/vVERSION_PLACEHOLDER/pretty-log-x86_64-apple-darwin.tar.gz"
-      sha256 "SHA256_X86_DARWIN_PLACEHOLDER"
+      url "https://github.com/r0rr3/pretty-log/releases/download/v${VERSION}/pretty-log-x86_64-apple-darwin.tar.gz"
+      sha256 "${SHA_X86_MAC}"
     end
   end
 
   on_linux do
     on_arm64 do
-      url "https://github.com/r0rr3/pretty-log/releases/download/vVERSION_PLACEHOLDER/pretty-log-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "SHA256_ARM_LINUX_PLACEHOLDER"
+      url "https://github.com/r0rr3/pretty-log/releases/download/v${VERSION}/pretty-log-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "${SHA_ARM_LNX}"
     end
     on_intel do
-      url "https://github.com/r0rr3/pretty-log/releases/download/vVERSION_PLACEHOLDER/pretty-log-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "SHA256_X86_LINUX_PLACEHOLDER"
+      url "https://github.com/r0rr3/pretty-log/releases/download/v${VERSION}/pretty-log-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "${SHA_X86_LNX}"
     end
   end
 
@@ -168,25 +139,14 @@ class PrettyLog < Formula
 
   test do
     output = shell_output("echo '{\"level\":\"info\",\"msg\":\"hello\"}' | #{bin}/pretty --no-color")
-    assert_match /INFO/, output
-    assert_match /hello/, output
+    assert_match "INFO", output
+    assert_match "hello", output
   end
 end
 EOF
 
-          # Replace placeholders
-          sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" Formula/pretty-log.rb
-          sed -i "s/SHA256_X86_DARWIN_PLACEHOLDER/$SHA256_X86_DARWIN/g" Formula/pretty-log.rb
-          sed -i "s/SHA256_ARM_DARWIN_PLACEHOLDER/$SHA256_ARM_DARWIN/g" Formula/pretty-log.rb
-          sed -i "s/SHA256_X86_LINUX_PLACEHOLDER/$SHA256_X86_LINUX/g" Formula/pretty-log.rb
-          sed -i "s/SHA256_ARM_LINUX_PLACEHOLDER/$SHA256_ARM_LINUX/g" Formula/pretty-log.rb
-
-          cat Formula/pretty-log.rb
-
-      - name: Commit updated formula
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/pretty-log.rb
-          git commit -m "chore: update Homebrew formula with SHA256 checksums for ${{ github.ref_name }}" || echo "No changes to commit"
+          git commit -m "chore: update formula to v${VERSION}" || echo "No changes to commit"
           git push
