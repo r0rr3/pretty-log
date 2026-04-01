@@ -274,4 +274,12 @@ mod tests {
         assert_eq!(shorten_timestamp("2024-01-01T10:23:45Z"), "10:23:45");
         assert_eq!(shorten_timestamp("2024-01-01T10:23:45.123Z"), "10:23:45");
     }
+
+    #[test]
+    fn render_raw_with_continuations_indented() {
+        let continuations = vec!["trace: xyz".to_string()];
+        let out = render_raw("some raw log", &continuations, true);
+        assert!(out.contains("some raw log"));
+        assert!(out.contains("\n  trace: xyz"));
+    }
 }
