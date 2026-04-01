@@ -1,24 +1,22 @@
 # pretty-log
 
-A high-performance streaming log beautifier for the terminal. Transform raw JSON logs into human-readable, colorized output with support for multi-line stack traces and customizable field mapping.
+A fast log prettifier for JSON logs. Piped from `tail -f`, it gives you colored output, multi-line support for stack traces, and sane field recognition out of the box.
 
 **[中文版本](README.zh-CN.md)** | **[English](README.md)**
 
 [![Rust](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-## Features
+## What you get
 
-✨ **Streaming JSON Parser** — Process logs line-by-line without buffering  
-🎨 **ANSI Color Output** — Auto-detects TTY for intelligent colorization  
-📋 **Multi-line Grouping** — Preserves stack traces and indents continuation lines  
-⚙️ **Zero-Config Default** — Works out of the box with sensible field aliases  
-🔧 **Flexible Configuration** — YAML config for custom field mappings and behaviors  
-⚡ **Single Static Binary** — No runtime dependencies, ~5MB release build  
+- Streaming JSON parsing — reads from stdin, no buffering
+- ANSI colors — detects if you're in a real terminal and colors accordingly
+- Multi-line support — knows when a line is a stack trace and indents it
+- Sensible defaults — works immediately with common field names (level, time, msg, trace_id)
+- YAML config — customize field names and behaviors if your logs use something different
+- No dependencies — single static ~5MB binary, runs anywhere
 
-## Installation
-
-### Build from Source
+## Install
 
 ```bash
 git clone https://github.com/jsooo/pretty-log.git
@@ -27,25 +25,20 @@ cargo build --release
 ./target/release/pretty --help
 ```
 
-## Quick Start
+## Try it
 
 ```bash
-# Basic usage
 tail -f app.log | pretty
 
-# Highlight errors
-tail -f app.log | pretty -e
-
-# Expand nested JSON
-cat app.log | pretty -s
-
-# Disable colors
-cat app.log | pretty --no-color | grep "ERROR"
+tail -f app.log | pretty -e          # highlight errors
+cat app.log | pretty -s              # expand nested JSON
+cat app.log | pretty --no-color      # turn off colors
 ```
 
-## Examples
+## What does it do?
 
-**Input:**
+Here's a real example. Feed it JSON:
+
 ```json
 {"level":"info","msg":"server started","port":8080,"time":"2024-06-15T14:30:00Z"}
 {"level":"error","msg":"crash","trace_id":"abc-123","time":"2024-06-15T14:30:01Z"}
@@ -53,7 +46,8 @@ goroutine 1 [running]:
 main.handler(...)
 ```
 
-**Output:**
+You get:
+
 ```
 14:30:00  INFO   server started  port=8080
 14:30:01  ERROR  crash  trace=abc-123
@@ -61,25 +55,18 @@ main.handler(...)
   main.handler(...)
 ```
 
-## CLI Flags
+## Flags
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--expand` | `-s` | Expand nested JSON field values |
-| `--highlight-errors` | `-e` | Highlight error keywords (red) |
-| `--config PATH` | | Load YAML configuration file |
-| `--no-color` | | Disable ANSI color output |
+| Flag | Short | What it does |
+|------|-------|------|
+| `--expand` | `-s` | Pretty-print nested JSON values |
+| `--highlight-errors` | `-e` | Red highlight for errors in the message |
+| `--config PATH` | | Use a custom config file |
+| `--no-color` | | Turn off colors (auto-off when piped) |
 
-## Configuration
+## Config
 
-### Default Locations
-
-1. `--config <path>` (CLI)
-2. `.pretty.yaml` (current directory)
-3. `~/.config/pretty/config.yaml` (user home)
-4. Built-in defaults
-
-### Example Config
+If your logs use different field names, create `~/.config/pretty/config.yaml`:
 
 ```yaml
 fields:
@@ -97,75 +84,47 @@ multiline:
   continuation_pattern: "^[^\{]"
 ```
 
-## Built-in Field Aliases
+Config is looked up in order: `--config`, `.pretty.yaml`, `~/.config/pretty/config.yaml`, built-in defaults.
 
-- **level:** `level`, `lvl`, `severity`, `log_level`
-- **timestamp:** `time`, `timestamp`, `ts`, `@timestamp`
-- **message:** `msg`, `message`, `body`
-- **trace_id:** `trace_id`, `traceId`, `traceid`, `request_id`, `x-trace-id`
-- **caller:** `caller`, `file`, `source`
+## Default field names
 
-## Color Scheme
+Recognized out of the box:
 
-| Element | Color |
-|---------|-------|
-| ERROR | Red + Bold |
-| WARN | Yellow + Bold |
-| INFO | Green |
-| DEBUG | Blue |
-| TRACE | Dark Gray |
-| Timestamp | Cyan |
-| Message | White + Bold |
-| Trace ID | Magenta |
-| Continuation Lines | Dark Gray (indented) |
+- level: level, lvl, severity, log_level
+- timestamp: time, timestamp, ts, @timestamp
+- message: msg, message, body
+- trace_id: trace_id, traceId, traceid, request_id, x-trace-id
+- caller: caller, file, source
 
-## Use Cases
+## Colors
 
-### Development
-```bash
-cargo run -- app.log | pretty -e
-```
+- ERROR → red + bold
+- WARN → yellow + bold
+- INFO → green
+- DEBUG → blue
+- TRACE → dark gray
+- Other fields → standard colors
 
-### Production
-```bash
-tail -f /var/log/app.log | pretty
-```
-
-### Pipelines
-```bash
-# Filter errors only
-cat app.log | pretty | grep "ERROR"
-
-# Save formatted logs
-tail -f app.log | pretty > formatted.log
-```
-
-## Building
+## Build and test
 
 ```bash
-# Debug build
 cargo build
-
-# Release build (optimized)
 cargo build --release
-
-# Run tests
 cargo test
 ```
 
-## Project Structure
+## How it works
 
 ```
 pretty-log/
 ├── src/
-│   ├── main.rs          # CLI entry point
-│   ├── config.rs        # YAML configuration loading
-│   ├── reader.rs        # Streaming reader with multi-line support
-│   ├── parser.rs        # JSON parsing
-│   ├── classifier.rs    # Field semantic recognition
-│   └── renderer.rs      # ANSI color rendering
-├── tests/
-│   └── integration.rs   # End-to-end tests
+│   ├── main.rs          entry point, CLI flags
+│   ├── config.rs        load and merge YAML config
+│   ├── reader.rs        group lines with stack traces
+│   ├── parser.rs        detect JSON, extract fields
+│   ├── classifier.rs    figure out what each field means
+│   └── renderer.rs      format and colorize
+├── tests/integration.rs full pipeline tests
 ├── Cargo.toml
 └── README.md
 ```
@@ -173,26 +132,21 @@ pretty-log/
 ## Testing
 
 ```bash
-# All tests
 cargo test
-
-# Specific test
 cargo test basic_json_line_output
-
-# With output
 cargo test -- --nocapture
 ```
 
-## Limitations
+## Known limits
 
-- JSON objects only (not arrays as top-level lines)
-- Single-line output format
-- No built-in filtering (use shell pipes)
-- Invalid regex patterns fall back to defaults
+- JSON objects only (not arrays at the top level)
+- Single-line output (no wrapping)
+- No built-in filtering (pipe to grep instead)
+- Regex in config that don't compile just use the fallback
 
 ## License
 
-MIT License — See [LICENSE](LICENSE)
+MIT
 
 ---
 
