@@ -18,6 +18,16 @@ A fast log prettifier for JSON logs. Piped from `tail -f`, it gives you colored 
 
 ## Install
 
+### Homebrew (macOS and Linux)
+
+```bash
+brew install jsooo/tap/pretty-log
+```
+
+See [HOMEBREW.md](HOMEBREW.md) for more details.
+
+### From source
+
 ```bash
 git clone https://github.com/jsooo/pretty-log.git
 cd pretty-log

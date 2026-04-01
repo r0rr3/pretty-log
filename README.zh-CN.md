@@ -16,6 +16,14 @@
 
 ## 安装
 
+### Homebrew（macOS 和 Linux）
+
+```bash
+brew install jsooo/tap/pretty-log
+```
+
+详见 [HOMEBREW.md](HOMEBREW.md)。
+
 ### 从源码编译
 
 ```bash
