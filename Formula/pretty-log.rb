@@ -7,22 +7,22 @@ class PrettyLog < Formula
   on_macos do
     on_arm64 do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-apple-darwin.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_CI"
+      sha256 "a96cbdd8ae724b4b3dedfc979e1820a53aa7802c23f7733d0ecec0454697913e"
     end
     on_intel do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-x86_64-apple-darwin.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_CI"
+      sha256 "ca2467044ced2031a0e714d73c1857f3fa561e02357c02ecb261b95410660346"
     end
   end
 
   on_linux do
     on_arm64 do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_CI"
+      sha256 "d30aa13981e684a90862a64d23c0c34dd72613e7067f07adbbe0930ef48feea9"
     end
     on_intel do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "WILL_BE_UPDATED_BY_CI"
+      sha256 "cc9a2c8c8618a3a648891a5a8eec0a3d92767380c57be38308da9709d88d821a"
     end
   end
 
