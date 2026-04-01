@@ -13,7 +13,7 @@ use classifier::classify;
 use renderer::{render, render_raw};
 
 #[derive(ClapParser, Debug)]
-#[command(name = "pretty", about = "Streaming log beautifier")]
+#[command(name = "pretty", about = "Streaming log beautifier", long_about = "pretty reads from stdin and outputs beautified JSON logs.\n\nExamples:\n  tail -f app.log | pretty\n  cat app.log | pretty -e\n  pretty < app.log")]
 struct Args {
     /// Expand nested JSON field values
     #[arg(short = 's', long = "expand")]
@@ -30,10 +30,24 @@ struct Args {
     /// Disable ANSI color output
     #[arg(long = "no-color")]
     no_color: bool,
+
+    /// Note: This tool is designed for piping. Use 'cat file.log | pretty' instead
+    #[arg(value_name = "FILE", hide = true)]
+    _input: Option<String>,
 }
 
 fn main() {
     let args = Args::parse();
+
+    // Helpful hint if user tries to pass a file argument
+    if args._input.is_some() {
+        eprintln!("Error: pretty is designed for piping, not file arguments.");
+        eprintln!("Usage: cat file.log | pretty");
+        eprintln!("       tail -f app.log | pretty");
+        eprintln!("       pretty < file.log");
+        eprintln!("\nUse 'pretty --help' for more options.");
+        std::process::exit(1);
+    }
 
     let mut config = load_config(args.config.as_deref());
 

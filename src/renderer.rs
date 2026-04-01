@@ -193,7 +193,6 @@ mod tests {
             caller: None,
             extras: vec![],
             continuation_lines: vec![],
-            raw: "".to_string(),
         }
     }
 
@@ -222,7 +221,6 @@ mod tests {
             caller: None,
             extras: vec![],
             continuation_lines: vec![],
-            raw: "".to_string(),
         };
         let out = render(&line, &Config::default(), true);
         assert!(out.contains("10:23:45"));
@@ -238,7 +236,6 @@ mod tests {
             caller: None,
             extras: vec![("port".to_string(), Value::Number(8080.into()))],
             continuation_lines: vec![],
-            raw: "".to_string(),
         };
         let out = render(&line, &Config::default(), true);
         assert!(out.contains("port=8080"));
@@ -254,7 +251,6 @@ mod tests {
             caller: None,
             extras: vec![],
             continuation_lines: vec!["at main.rs:42".to_string()],
-            raw: "".to_string(),
         };
         let out = render(&line, &Config::default(), true);
         assert!(out.contains("\n  at main.rs:42"));

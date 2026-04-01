@@ -34,7 +34,6 @@ pub struct ClassifiedLine {
     pub caller: Option<String>,
     pub extras: Vec<(String, Value)>,
     pub continuation_lines: Vec<String>,
-    pub raw: String,
 }
 
 pub fn classify(parsed: ParsedLine, config: &Config) -> ClassifiedLine {
@@ -73,7 +72,6 @@ pub fn classify(parsed: ParsedLine, config: &Config) -> ClassifiedLine {
         caller,
         extras,
         continuation_lines: parsed.continuation_lines,
-        raw: parsed.raw,
     }
 }
 
