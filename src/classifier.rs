@@ -94,7 +94,6 @@ mod tests {
         let fields: Map<String, Value> = serde_json::from_str(json).unwrap();
         ParsedLine {
             fields,
-            raw: json.to_string(),
             continuation_lines: vec![],
         }
     }

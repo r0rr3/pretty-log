@@ -4,7 +4,6 @@ use serde_json::{Map, Value};
 #[derive(Debug, Clone)]
 pub struct ParsedLine {
     pub fields: Map<String, Value>,
-    pub raw: String,
     pub continuation_lines: Vec<String>,
 }
 
@@ -26,7 +25,6 @@ pub fn parse_line(main: &str, continuation_lines: Vec<String>) -> ParseResult {
     match serde_json::from_str::<Map<String, Value>>(trimmed) {
         Ok(fields) => ParseResult::Json(ParsedLine {
             fields,
-            raw: main.to_string(),
             continuation_lines,
         }),
         Err(_) => ParseResult::Raw {
