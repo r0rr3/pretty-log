@@ -1,16 +1,30 @@
+//! Streaming line reader with multi-line grouping support
+//!
+//! Groups JSON log lines with their continuation lines (e.g., stack traces).
+//! Uses regex patterns to detect when a line belongs to the previous entry.
+
 use std::io::BufRead;
 use crate::config::MultilineConfig;
 use regex::Regex;
 
-/// A logical log line: one primary line plus zero or more continuation lines.
+/// A logical log entry consisting of a main line and optional continuation lines.
+///
+/// For example:
+/// ```text
+/// {"level":"error","msg":"crash"}    // main
+/// goroutine 1 [running]:             // continuation
+/// main.go:42                         // continuation
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct LogicalLine {
     pub main: String,
     pub continuations: Vec<String>,
 }
 
-/// Reads logical log lines from a BufRead source.
-/// Groups continuation lines (e.g., stack traces) with the preceding JSON line.
+/// Reads logical log lines from a buffered input stream.
+///
+/// Groups continuation lines (e.g., stack traces) with their preceding JSON entry.
+/// Uses configurable regex patterns to detect continuation lines.
 pub struct LineReader<R: BufRead> {
     inner: R,
     pending: Option<LogicalLine>,

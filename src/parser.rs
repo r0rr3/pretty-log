@@ -1,6 +1,10 @@
+//! JSON line parsing with fallback for non-JSON content
+
 use serde_json::{Map, Value};
 
 /// A successfully parsed JSON log line.
+///
+/// Contains all extracted JSON fields and associated continuation lines.
 #[derive(Debug, Clone)]
 pub struct ParsedLine {
     pub fields: Map<String, Value>,
@@ -8,9 +12,11 @@ pub struct ParsedLine {
 }
 
 /// Result of attempting to parse a log line.
+///
+/// Either a JSON object with extracted fields, or raw text to pass through unchanged.
 #[derive(Debug, Clone)]
 pub enum ParseResult {
-    /// Line was valid JSON object
+    /// Successfully parsed as JSON object
     Json(ParsedLine),
     /// Line was not JSON — pass through as-is
     Raw {
@@ -20,6 +26,16 @@ pub enum ParseResult {
 }
 
 /// Parse a single logical line (may include continuation lines).
+///
+/// Attempts to parse the main line as a JSON object. If it fails or is not an object,
+/// the entire line (with continuations) is returned as raw text.
+///
+/// # Arguments
+/// * `main` - Primary log line (may contain JSON)
+/// * `continuation_lines` - Associated non-JSON continuation lines (stack traces, etc.)
+///
+/// # Returns
+/// Either parsed JSON fields or the original line as raw text
 pub fn parse_line(main: &str, continuation_lines: Vec<String>) -> ParseResult {
     let trimmed = main.trim();
     match serde_json::from_str::<Map<String, Value>>(trimmed) {

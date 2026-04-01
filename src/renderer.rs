@@ -1,9 +1,24 @@
+//! Output rendering with ANSI color support
+//!
+//! Formats classified log lines into human-readable single-line output
+//! with optional ANSI colors based on semantic field types.
+
 use owo_colors::{OwoColorize, Style, Stream::Stdout};
 use crate::classifier::{ClassifiedLine, LogLevel, value_to_string};
 use crate::config::Config;
 
-/// Render a classified line to a String.
-/// no_color=true disables all ANSI escape codes.
+/// Render a classified log line to a formatted string.
+///
+/// Output order: timestamp → level → message → trace_id → caller → extras
+/// Continuation lines are indented with 2 spaces.
+///
+/// # Arguments
+/// * `line` - The classified log line to render
+/// * `config` - Configuration controlling features like highlight_errors and expand_nested
+/// * `no_color` - If true, disables all ANSI color codes (useful for piping)
+///
+/// # Returns
+/// Formatted single-line string with optional ANSI colors
 pub fn render(line: &ClassifiedLine, config: &Config, no_color: bool) -> String {
     let mut parts: Vec<String> = Vec::new();
 

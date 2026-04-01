@@ -1,3 +1,11 @@
+//! pretty — a streaming log beautifier for JSON logs
+//!
+//! This CLI tool reads JSON logs from stdin and outputs a formatted, colorized version.
+//! It supports multi-line grouping for stack traces and customizable field recognition.
+//!
+//! Pipeline:
+//! stdin → LineReader → parse_line → classify → render → stdout
+
 mod config;
 mod reader;
 mod parser;

@@ -1,7 +1,13 @@
+//! Field classification and semantic recognition
+//!
+//! Recognizes semantic roles of JSON fields (level, timestamp, message, etc.)
+//! using configurable field aliases.
+
 use serde_json::Value;
 use crate::config::Config;
 use crate::parser::ParsedLine;
 
+/// Recognized log level severity.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogLevel {
     Error,
@@ -13,6 +19,9 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
+    /// Parse a string into a LogLevel (case-insensitive).
+    ///
+    /// Recognizes common aliases like "err", "fatal", "warning", etc.
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "error" | "err" | "fatal" | "crit" | "critical" => LogLevel::Error,

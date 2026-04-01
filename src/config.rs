@@ -1,5 +1,13 @@
+//! Configuration loading and merging
+//!
+//! Loads configuration from YAML files with fallback to built-in defaults.
+//! Supports multiple config locations with a clear priority order.
+
 use serde::{Deserialize, Serialize};
 
+/// Top-level configuration for pretty.
+///
+/// Fields control parsing behavior, output formatting, and feature toggles.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -67,8 +75,24 @@ impl Default for Config {
     }
 }
 
-/// Load config from file. Returns default config if file not found.
-/// Prints warning to stderr if file exists but is invalid YAML.
+/// Load configuration from file with fallback to defaults.
+///
+/// Search order:
+/// 1. Explicit path (if provided)
+/// 2. `.pretty.yaml` in current directory
+/// 3. `~/.config/pretty/config.yaml`
+/// 4. Built-in defaults
+///
+/// # Behavior
+/// - Returns defaults if no config file found
+/// - Prints warning to stderr if file exists but is invalid YAML
+/// - Merges with defaults for missing fields
+///
+/// # Arguments
+/// * `path` - Optional explicit config file path
+///
+/// # Returns
+/// Loaded configuration or defaults if file not found
 pub fn load_config(path: Option<&std::path::Path>) -> Config {
     let resolved = path
         .map(|p| p.to_path_buf())
