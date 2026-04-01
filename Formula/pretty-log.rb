@@ -7,22 +7,22 @@ class PrettyLog < Formula
   on_macos do
     on_arm do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-apple-darwin.tar.gz"
-      sha256 "a96cbdd8ae724b4b3dedfc979e1820a53aa7802c23f7733d0ecec0454697913e"
+      sha256 "4d1b69bdb173cacfbbcda7e9f56acf22dbcc3313ce4816978db63d3a61f6dc26"
     end
     on_intel do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-x86_64-apple-darwin.tar.gz"
-      sha256 "ca2467044ced2031a0e714d73c1857f3fa561e02357c02ecb261b95410660346"
+      sha256 "36e5cdc399df03159899a08de92e9fbb4d04520ebc6d8d42dfd86979ea78c774"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "d30aa13981e684a90862a64d23c0c34dd72613e7067f07adbbe0930ef48feea9"
+      sha256 "920ebba74ae8268295aee23b19f4f33add29ce44acf46fce9e0eee55a71698a6"
     end
     on_intel do
       url "https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "cc9a2c8c8618a3a648891a5a8eec0a3d92767380c57be38308da9709d88d821a"
+      sha256 "84a39b44a086a9c17f399e57b2eae6b464695eebeb0e1ed47df898c14360555e"
     end
   end
 
