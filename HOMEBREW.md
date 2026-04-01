@@ -1,6 +1,6 @@
 # Homebrew Support
 
-pretty-log is available via Homebrew for macOS and Linux users.
+pretty-log is available via Homebrew for macOS and Linux users. Installation is fast since we provide precompiled binaries for all platforms.
 
 ## Installation via Homebrew
 
@@ -17,9 +17,11 @@ brew install pretty-log
 
 ## Supported Platforms
 
-- **macOS** (x86_64 and Apple Silicon/aarch64)
-- **Linux** (x86_64 and aarch64)
-- **Homebrew on Linux** (using Linuxbrew)
+- **macOS** (x86_64 and Apple Silicon/aarch64) — precompiled binary
+- **Linux** (x86_64 and aarch64) — precompiled binary
+- **Homebrew on Linux** (using Linuxbrew) — precompiled binary
+
+Installation is **fast** — downloads precompiled binary (~5MB), no compilation needed!
 
 ## Building from Source with Homebrew
 
@@ -66,18 +68,42 @@ See [Formula/pretty-log.rb](Formula/pretty-log.rb) for the current formula.
 
 ## Release Process
 
-When releasing a new version:
+### Automated (GitHub Actions)
 
-1. Create a release on GitHub with the version tag (e.g., `v0.0.2`)
-2. Get the SHA256 of the release tarball:
+Releases are fully automated via GitHub Actions. When you push a version tag:
+
+1. **Create release tag:**
    ```bash
-   curl -sL https://github.com/jsooo/pretty-log/archive/refs/tags/v0.0.2.tar.gz | shasum -a 256
+   git tag v0.0.2
+   git push origin v0.0.2
    ```
-3. Update the formula in the homebrew-tap repository:
-   - Update version in URL
-   - Update SHA256 checksum
-4. Commit and push to the tap repository
-5. Users can then `brew upgrade pretty-log` or `brew install` the new version
+
+2. **GitHub Actions automatically:**
+   - Builds binaries for 4 platforms (macOS x86_64/aarch64, Linux x86_64/aarch64)
+   - Uploads all binaries to GitHub Release
+   - Calculates SHA256 checksums
+   - Updates the Homebrew formula with correct URLs and checksums
+   - Commits the updated formula back to the repository
+
+3. **Users can install:**
+   ```bash
+   brew upgrade pretty-log
+   # or
+   brew install pretty-log
+   ```
+
+### Manual Process (if needed)
+
+If you need to update the formula manually:
+
+1. Get the SHA256 of each release binary:
+   ```bash
+   curl -sL https://github.com/r0rr3/pretty-log/releases/download/v0.0.2/pretty-log-x86_64-apple-darwin.tar.gz | shasum -a 256
+   ```
+
+2. Update `Formula/pretty-log.rb` with the checksums
+
+3. Push to the tap repository
 
 ## Troubleshooting
 

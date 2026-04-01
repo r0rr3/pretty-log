@@ -9,14 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Homebrew support for macOS and Linux
-  - Easy installation via `brew install jsooo/tap/pretty-log`
-  - Pre-built binaries for x86_64 and aarch64
-- Comprehensive installation documentation
+- **Homebrew support** for macOS and Linux
+  - Easy installation: `brew install jsooo/tap/pretty-log`
+  - Pre-compiled binaries for x86_64 and aarch64 (no compilation needed!)
+- **GitHub Actions workflow** for automated cross-platform releases
+  - Automatically builds binaries for 4 platforms on version tag:
+    - macOS x86_64 and aarch64 (Apple Silicon)
+    - Linux x86_64 and aarch64
+  - Uploads binaries to GitHub Release
+  - Calculates SHA256 checksums automatically
+  - Updates Homebrew formula with correct checksums and URLs
+- Comprehensive Homebrew documentation
 
 ### Changed
 
 - Improved documentation with Homebrew installation instructions
+- Homebrew formula now uses precompiled binaries (faster installation)
+- Automated release process reduces manual work
 
 ## [0.0.1] - 2026-04-01
 
