@@ -4,6 +4,66 @@ mod parser;
 mod classifier;
 mod renderer;
 
+use std::io::{self, Write};
+use clap::Parser as ClapParser;
+use config::load_config;
+use reader::LineReader;
+use parser::{parse_line, ParseResult};
+use classifier::classify;
+use renderer::{render, render_raw};
+
+#[derive(ClapParser, Debug)]
+#[command(name = "pretty", about = "Streaming log beautifier")]
+struct Args {
+    /// Expand nested JSON field values
+    #[arg(short = 's', long = "expand")]
+    expand: bool,
+
+    /// Highlight error keywords in message field
+    #[arg(short = 'e', long = "highlight-errors")]
+    highlight_errors: bool,
+
+    /// Path to config file
+    #[arg(long = "config", value_name = "FILE")]
+    config: Option<std::path::PathBuf>,
+
+    /// Disable ANSI color output
+    #[arg(long = "no-color")]
+    no_color: bool,
+}
+
 fn main() {
-    println!("pretty-log");
+    let args = Args::parse();
+
+    let mut config = load_config(args.config.as_deref());
+
+    // CLI flags override config file
+    if args.expand {
+        config.expand_nested = true;
+    }
+    if args.highlight_errors {
+        config.highlight_errors = true;
+    }
+
+    // Disable color when not a TTY or --no-color is set
+    let no_color = args.no_color || !atty::is(atty::Stream::Stdout);
+
+    let stdin = io::stdin();
+    let reader = LineReader::new(stdin.lock(), &config.multiline);
+    let stdout = io::stdout();
+    let mut out = io::BufWriter::new(stdout.lock());
+
+    for logical_line in reader {
+        let result = parse_line(&logical_line.main, logical_line.continuations);
+        let rendered = match result {
+            ParseResult::Json(parsed) => {
+                let classified = classify(parsed, &config);
+                render(&classified, &config, no_color)
+            }
+            ParseResult::Raw { line, continuation_lines } => {
+                render_raw(&line, &continuation_lines, no_color)
+            }
+        };
+        writeln!(out, "{}", rendered).ok();
+    }
 }
