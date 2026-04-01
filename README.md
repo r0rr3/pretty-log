@@ -126,7 +126,7 @@ cargo run -- app.log | pretty -e
 
 ### Production
 ```bash
-ssh user@server "tail -f /var/log/app.log" | pretty
+tail -f /var/log/app.log | pretty
 ```
 
 ### Pipelines
