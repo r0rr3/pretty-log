@@ -24,3 +24,7 @@ Thumbs.db
 # Debug outputs
 *.exe
 *.pdb
+
+# Test outputs and logs
+app.log
+docs/
