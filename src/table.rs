@@ -500,7 +500,11 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
                     }
                 }
                 Ok(false) => {}
-                Err(_) => break,
+                Err(_) => {
+                    // On some platforms, poll may briefly error (e.g. piped stdin).
+                    // Sleep and retry to keep the thread alive for user interaction.
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
             }
         }
     });

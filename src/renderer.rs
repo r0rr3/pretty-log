@@ -146,23 +146,23 @@ fn colorize_level(lvl: &LogLevel, s: &str) -> String {
     let padded = format!(" {} ", s.trim());
     match lvl {
         LogLevel::Error => {
-            let style = Style::new().bold().bright_red().on_red();
+            let style = Style::new().bold().bright_red();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Warn => {
-            let style = Style::new().bold().bright_yellow().on_yellow();
+            let style = Style::new().bold().bright_yellow();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Info => {
-            let style = Style::new().bold().bright_green().on_green();
+            let style = Style::new().bold().bright_green();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Debug => {
-            let style = Style::new().bold().bright_blue().on_blue();
+            let style = Style::new().bold().bright_blue();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Trace => {
-            let style = Style::new().bright_black().on_black();
+            let style = Style::new().bright_black();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Unknown(_) => s.to_string(),
