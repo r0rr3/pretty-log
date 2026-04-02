@@ -15,6 +15,7 @@ pub struct Config {
     pub expand_nested: bool,
     pub highlight_errors: bool,
     pub multiline: MultilineConfig,
+    pub table: TableConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -30,6 +31,12 @@ pub struct FieldAliases {
 pub struct MultilineConfig {
     pub enabled: bool,
     pub continuation_pattern: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TableConfig {
+    pub columns: Vec<String>,
+    pub show_extras_in_detail: bool,
 }
 
 impl Default for FieldAliases {
@@ -64,6 +71,22 @@ impl Default for MultilineConfig {
     }
 }
 
+impl Default for TableConfig {
+    fn default() -> Self {
+        Self {
+            columns: vec![
+                "time".into(),
+                "level".into(),
+                "message".into(),
+                "service".into(),
+                "label".into(),
+                "trace_id".into(),
+            ],
+            show_extras_in_detail: false,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -71,6 +94,7 @@ impl Default for Config {
             expand_nested: false,
             highlight_errors: false,
             multiline: MultilineConfig::default(),
+            table: TableConfig::default(),
         }
     }
 }
@@ -169,5 +193,14 @@ mod tests {
         let cfg = load_config(Some(f.path()));
         assert!(cfg.expand_nested);
         assert!(cfg.highlight_errors);
+    }
+
+    #[test]
+    fn default_table_config_has_expected_columns() {
+        let cfg = Config::default();
+        assert_eq!(cfg.table.columns, vec![
+            "time", "level", "message", "service", "label", "trace_id"
+        ]);
+        assert!(!cfg.table.show_extras_in_detail);
     }
 }
