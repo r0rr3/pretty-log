@@ -11,6 +11,7 @@ mod reader;
 mod parser;
 mod classifier;
 mod renderer;
+mod table;
 
 use std::io::{self, Write};
 use clap::Parser as ClapParser;
@@ -38,6 +39,14 @@ struct Args {
     /// Disable ANSI color output
     #[arg(long = "no-color")]
     no_color: bool,
+
+    /// Enable interactive table view
+    #[arg(short = 't', long = "table")]
+    table: bool,
+
+    /// Show extras fields in expanded row detail (table mode only)
+    #[arg(short = 'x', long = "extras")]
+    extras: bool,
 
     /// Note: This tool is designed for piping. Use 'cat file.log | pretty' instead
     #[arg(value_name = "FILE", hide = true)]
@@ -69,6 +78,15 @@ fn main() {
 
     // Disable color when not a TTY or --no-color is set
     let no_color = args.no_color || !atty::is(atty::Stream::Stdout);
+
+    if args.table {
+        let show_extras = args.extras || config.table.show_extras_in_detail;
+        if let Err(e) = table::run_table_mode(&config, show_extras) {
+            eprintln!("pretty: table mode error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
 
     let stdin = io::stdin();
     let reader = LineReader::new(stdin.lock(), &config.multiline);
