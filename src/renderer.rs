@@ -41,18 +41,17 @@ pub fn render(line: &ClassifiedLine, config: &Config, no_color: bool) -> String 
     }
 
     if let Some(ref msg) = line.message {
-        let display = if config.highlight_errors && contains_error_keyword(msg) {
-            if no_color {
-                msg.clone()
-            } else {
-                let style = Style::new().bold().red();
-                format!("{}", msg.if_supports_color(Stdout, |t| t.style(style)))
-            }
-        } else if no_color {
+        let display = if no_color {
             msg.clone()
         } else {
-            let style = Style::new().bold().white();
-            format!("{}", msg.if_supports_color(Stdout, |t| t.style(style)))
+            match &line.level {
+                Some(LogLevel::Error) => {
+                    format!("{}", msg.if_supports_color(Stdout, |t| t.red()))
+                }
+                _ => {
+                    format!("{}", msg.if_supports_color(Stdout, |t| t.white()))
+                }
+            }
         };
         parts.push(display);
     }
@@ -62,8 +61,8 @@ pub fn render(line: &ClassifiedLine, config: &Config, no_color: bool) -> String 
             parts.push(format!("trace={}", tid));
         } else {
             parts.push(format!(
-                "trace={}",
-                tid.if_supports_color(Stdout, |t| t.magenta())
+                "{}",
+                format!("trace={}", tid).if_supports_color(Stdout, |t| t.bright_black())
             ));
         }
     }
@@ -73,8 +72,8 @@ pub fn render(line: &ClassifiedLine, config: &Config, no_color: bool) -> String 
             parts.push(format!("caller={}", c));
         } else {
             parts.push(format!(
-                "caller={}",
-                c.if_supports_color(Stdout, |t| t.bright_black())
+                "{}",
+                format!("caller={}", c).if_supports_color(Stdout, |t| t.bright_black())
             ));
         }
     }
@@ -89,9 +88,8 @@ pub fn render(line: &ClassifiedLine, config: &Config, no_color: bool) -> String 
             parts.push(format!("{}={}", k, val_str));
         } else {
             parts.push(format!(
-                "{}={}",
-                k.if_supports_color(Stdout, |t| t.yellow()),
-                val_str
+                "{}",
+                format!("{}={}", k, val_str).if_supports_color(Stdout, |t| t.bright_black())
             ));
         }
     }
@@ -144,18 +142,29 @@ fn format_level(lvl: &LogLevel) -> String {
 }
 
 fn colorize_level(lvl: &LogLevel, s: &str) -> String {
+    // s comes from format_level (e.g. "INFO ", "ERROR") — trim before padding
+    let padded = format!(" {} ", s.trim());
     match lvl {
         LogLevel::Error => {
-            let style = Style::new().bold().red();
-            format!("{}", s.if_supports_color(Stdout, |t| t.style(style)))
+            let style = Style::new().bold().bright_red().on_red();
+            format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Warn => {
-            let style = Style::new().bold().yellow();
-            format!("{}", s.if_supports_color(Stdout, |t| t.style(style)))
+            let style = Style::new().bold().bright_yellow().on_yellow();
+            format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
-        LogLevel::Info  => format!("{}", s.if_supports_color(Stdout, |t| t.green())),
-        LogLevel::Debug => format!("{}", s.if_supports_color(Stdout, |t| t.blue())),
-        LogLevel::Trace => format!("{}", s.if_supports_color(Stdout, |t| t.bright_black())),
+        LogLevel::Info => {
+            let style = Style::new().bold().bright_green().on_green();
+            format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
+        }
+        LogLevel::Debug => {
+            let style = Style::new().bold().bright_blue().on_blue();
+            format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
+        }
+        LogLevel::Trace => {
+            let style = Style::new().bright_black().on_black();
+            format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
+        }
         LogLevel::Unknown(_) => s.to_string(),
     }
 }
@@ -170,11 +179,6 @@ pub fn shorten_timestamp(ts: &str) -> String {
         }
     }
     ts.chars().take(19).collect()
-}
-
-pub fn contains_error_keyword(msg: &str) -> bool {
-    msg.contains("error") || msg.contains("Error") || msg.contains("ERROR")
-        || msg.contains("err") || msg.contains("Err")
 }
 
 fn expand_value(v: &serde_json::Value) -> String {
@@ -272,12 +276,27 @@ mod tests {
     }
 
     #[test]
-    fn highlight_errors_marks_message_with_error_keyword() {
-        let mut cfg = Config::default();
-        cfg.highlight_errors = true;
-        let line = simple_line(LogLevel::Warn, "connection error occurred");
-        let out = render(&line, &cfg, true);
-        assert!(out.contains("connection error occurred"));
+    fn render_error_level_colors_message_red_no_color_mode() {
+        // In no_color mode, message text is still plain (no ANSI codes)
+        let line = simple_line(LogLevel::Error, "something broke");
+        let out = render(&line, &Config::default(), true);
+        assert!(out.contains("something broke"));
+        assert!(out.contains("ERROR"));
+    }
+
+    #[test]
+    fn render_extras_format_key_equals_value() {
+        let line = ClassifiedLine {
+            level: Some(LogLevel::Info),
+            timestamp: None,
+            message: Some("req".to_string()),
+            trace_id: None,
+            caller: None,
+            extras: vec![("port".to_string(), Value::Number(8080.into()))],
+            continuation_lines: vec![],
+        };
+        let out = render(&line, &Config::default(), true);
+        assert!(out.contains("port=8080"));
     }
 
     #[test]
