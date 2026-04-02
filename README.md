@@ -159,7 +159,8 @@ pretty-log/
 │   ├── reader.rs        group lines with stack traces
 │   ├── parser.rs        detect JSON, extract fields
 │   ├── classifier.rs    figure out what each field means
-│   └── renderer.rs      format and colorize
+│   ├── renderer.rs      format and colorize
+│   └── table.rs         interactive table mode (TUI, -t)
 ├── tests/integration.rs full pipeline tests
 ├── Cargo.toml
 └── README.md

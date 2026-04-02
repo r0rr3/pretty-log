@@ -302,6 +302,13 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
             Style::default()
         };
 
+        // Compute detail lines once (empty if not expanded)
+        let detail_lines = if is_expanded {
+            build_detail_lines(row, app.show_extras_in_detail)
+        } else {
+            vec![]
+        };
+
         let cells: Vec<Cell> = app.columns.iter().map(|col| {
             if *col == Column::Level {
                 let (text, style) = match &row.level {
@@ -314,11 +321,10 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
                 let raw = cell_value(col, row);
                 let text = if *col == Column::Message {
                     if is_expanded {
-                        let detail = build_detail_lines(row, app.show_extras_in_detail);
-                        if detail.is_empty() {
+                        if detail_lines.is_empty() {
                             raw
                         } else {
-                            format!("{}\n{}", raw, detail.join("\n"))
+                            format!("{}\n{}", raw, detail_lines.join("\n"))
                         }
                     } else {
                         truncate(&raw, max_w)
@@ -340,9 +346,8 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
 
         let mut table_row = Row::new(cells).style(base_style);
 
-        if is_expanded {
-            let detail = build_detail_lines(row, app.show_extras_in_detail);
-            let detail_height = 1 + detail.len() as u16;
+        if is_expanded && !detail_lines.is_empty() {
+            let detail_height = 1 + detail_lines.len() as u16;
             table_row = table_row.height(detail_height);
         }
 
