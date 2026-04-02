@@ -35,14 +35,13 @@ cargo build --release
 ./target/release/pretty --help
 ```
 
-## Try it
+## Usage
 
 ```bash
-tail -f app.log | pretty
-
-tail -f app.log | pretty -e          # highlight errors
-cat app.log | pretty -s              # expand nested JSON
-cat app.log | pretty --no-color      # turn off colors
+tail -f app.log | pretty           # stream with colors
+cat app.log | pretty               # pipe a file
+tail -f app.log | pretty -t        # interactive table mode
+tail -f app.log | pretty -t -x     # table mode + show extras in detail panel
 ```
 
 ## What does it do?
@@ -65,23 +64,44 @@ You get:
   main.handler(...)
 ```
 
-## Flags
+## Options
 
-| Flag | Short | What it does |
-|------|-------|------|
-| `--expand` | `-s` | Pretty-print nested JSON values |
-| `--highlight-errors` | `-e` | Red highlight for errors in the message |
-| `--config PATH` | | Use a custom config file |
-| `--no-color` | | Turn off colors (auto-off when piped) |
+| Flag | Description |
+|------|-------------|
+| `-s`, `--expand` | Expand nested JSON field values |
+| `-t`, `--table` | Enable interactive table view |
+| `-x`, `--extras` | Show extras fields in expanded row detail (table mode only) |
+| `--config <path>` | Path to config file |
+| `--no-color` | Disable ANSI color output |
 
-## Config
+## Table Mode
 
-If your logs use different field names, create `~/.config/pretty/config.yaml`:
+Activated with `-t`. Displays logs in a full-terminal interactive table.
+
+**Key bindings:**
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Move cursor |
+| Mouse wheel | Scroll |
+| `Enter` | Expand/collapse row detail |
+| `End` / `G` | Jump to latest row |
+| `Space` | Pause/resume auto-scroll |
+| `q` / `Ctrl-C` | Quit |
+
+When scrolling up during a live stream, new logs continue buffering. The status bar shows `↓ N new`. Press `End` to resume.
+
+## Configuration
+
+Config file locations (in priority order):
+1. `--config <path>`
+2. `.pretty.yaml` in current directory
+3. `~/.config/pretty/config.yaml`
 
 ```yaml
 fields:
   level:     [level, lvl, severity, log_level]
-  timestamp: [time, timestamp, ts, "@timestamp"]
+  timestamp: [time, timestamp, ts]
   message:   [msg, message, body]
   trace_id:  [trace_id, traceId, request_id]
   caller:    [caller, file, source]
@@ -91,10 +111,16 @@ highlight_errors: false
 
 multiline:
   enabled: true
-  continuation_pattern: "^[^\{]"
-```
+  continuation_pattern: "^[^{]"
 
-Config is looked up in order: `--config`, `.pretty.yaml`, `~/.config/pretty/config.yaml`, built-in defaults.
+# Table mode settings
+table:
+  # Column display order — omit any column to hide it
+  columns: [time, level, message, service, label, trace_id]
+  # Show extra fields (not in a dedicated column) in the expanded row detail panel
+  # Can also be enabled per-run with -x / --extras
+  show_extras_in_detail: false
+```
 
 ## Default field names
 
