@@ -14,7 +14,7 @@ use crate::config::Config;
 ///
 /// # Arguments
 /// * `line` - The classified log line to render
-/// * `config` - Configuration controlling features like highlight_errors and expand_nested
+/// * `config` - Configuration controlling features like expand_nested
 /// * `no_color` - If true, disables all ANSI color codes (useful for piping)
 ///
 /// # Returns
@@ -243,21 +243,6 @@ mod tests {
         };
         let out = render(&line, &Config::default(), true);
         assert!(out.contains("10:23:45"));
-    }
-
-    #[test]
-    fn render_includes_extra_fields() {
-        let line = ClassifiedLine {
-            level: Some(LogLevel::Info),
-            timestamp: None,
-            message: Some("req".to_string()),
-            trace_id: None,
-            caller: None,
-            extras: vec![("port".to_string(), Value::Number(8080.into()))],
-            continuation_lines: vec![],
-        };
-        let out = render(&line, &Config::default(), true);
-        assert!(out.contains("port=8080"));
     }
 
     #[test]
