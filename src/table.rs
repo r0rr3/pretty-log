@@ -1,5 +1,6 @@
 use crate::classifier::ClassifiedLine;
 use crate::config::Config;
+use std::io;
 
 // --- Column enum ---
 
@@ -180,7 +181,7 @@ impl App {
 }
 
 /// Placeholder for table mode entry point (implemented in Tasks 6-7).
-pub fn run_table_mode(_config: &Config, _show_extras: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_table_mode(_config: &Config, _show_extras: bool) -> io::Result<()> {
     Ok(())
 }
 
