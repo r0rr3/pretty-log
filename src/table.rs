@@ -1,4 +1,6 @@
 use std::io;
+use std::sync::mpsc;
+use std::thread;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -396,8 +398,133 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(status), area);
 }
 
-/// Placeholder for table mode entry point (implemented in Tasks 6-7).
-pub fn run_table_mode(_config: &Config, _show_extras: bool) -> io::Result<()> {
+pub enum AppEvent {
+    LogLine(ClassifiedLine),
+    RawLine(String),
+    Eof,
+    Term(Event),
+}
+
+/// Handle a terminal event. Returns false if the app should quit.
+pub fn handle_event(app: &mut App, event: Event) -> bool {
+    match event {
+        Event::Key(KeyEvent { code, modifiers, .. }) => match code {
+            KeyCode::Char('q') | KeyCode::Char('Q') => return false,
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return false,
+            KeyCode::Up   => app.scroll_up(),
+            KeyCode::Down => app.scroll_down(),
+            KeyCode::End  => app.jump_to_end(),
+            KeyCode::Char('G') => app.jump_to_end(),
+            KeyCode::Enter => app.toggle_expand(),
+            KeyCode::Char(' ') => app.toggle_pause(),
+            _ => {}
+        },
+        Event::Mouse(MouseEvent { kind, .. }) => match kind {
+            MouseEventKind::ScrollUp   => app.scroll_up(),
+            MouseEventKind::ScrollDown => app.scroll_down(),
+            _ => {}
+        },
+        _ => {}
+    }
+    true
+}
+
+pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
+    use crate::reader::LineReader;
+    use crate::parser::{parse_line, ParseResult};
+    use crate::classifier::classify;
+
+    // --- Terminal setup ---
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let size = terminal.size()?;
+    // Reserve 2 rows: 1 header + 1 status bar
+    let visible_height = size.height.saturating_sub(2);
+
+    let mut app = App::new(config, show_extras, size.width, visible_height);
+
+    let (tx, rx) = mpsc::channel::<AppEvent>();
+
+    // Stdin reader thread
+    let tx_log = tx.clone();
+    let cfg = config.clone();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        let reader = LineReader::new(stdin.lock(), &cfg.multiline);
+        for logical_line in reader {
+            let ev = match parse_line(&logical_line.main, logical_line.continuations) {
+                ParseResult::Json(parsed) => {
+                    AppEvent::LogLine(classify(parsed, &cfg))
+                }
+                ParseResult::Raw { line, .. } => AppEvent::RawLine(line),
+            };
+            if tx_log.send(ev).is_err() {
+                break;
+            }
+        }
+        let _ = tx_log.send(AppEvent::Eof);
+    });
+
+    // Terminal event thread
+    let tx_term = tx;
+    thread::spawn(move || {
+        loop {
+            match event::poll(std::time::Duration::from_millis(50)) {
+                Ok(true) => {
+                    if let Ok(ev) = event::read() {
+                        if tx_term.send(AppEvent::Term(ev)).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Ok(false) => {}
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Main render loop
+    let mut running = true;
+    while running {
+        terminal.draw(|f| render_ui(f, &app))?;
+
+        match rx.recv_timeout(std::time::Duration::from_millis(16)) {
+            Ok(AppEvent::LogLine(line)) => app.push_row(line),
+            Ok(AppEvent::RawLine(raw)) => {
+                app.push_row(ClassifiedLine {
+                    level: None,
+                    timestamp: None,
+                    message: Some(raw),
+                    trace_id: None,
+                    caller: None,
+                    extras: vec![],
+                    continuation_lines: vec![],
+                });
+            }
+            Ok(AppEvent::Eof) => { /* stdin closed; keep showing until user quits */ }
+            Ok(AppEvent::Term(ev)) => {
+                if !handle_event(&mut app, ev) {
+                    running = false;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+        }
+    }
+
+    // --- Terminal teardown ---
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
     Ok(())
 }
 
