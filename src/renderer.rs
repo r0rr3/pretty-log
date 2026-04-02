@@ -41,7 +41,14 @@ pub fn render(line: &ClassifiedLine, config: &Config, no_color: bool) -> String 
     }
 
     if let Some(ref msg) = line.message {
-        let display = if no_color {
+        let display = if config.highlight_errors && contains_error_keyword(msg) {
+            if no_color {
+                msg.clone()
+            } else {
+                let style = Style::new().bold().red();
+                format!("{}", msg.if_supports_color(Stdout, |t| t.style(style)))
+            }
+        } else if no_color {
             msg.clone()
         } else {
             match &line.level {
@@ -146,23 +153,23 @@ fn colorize_level(lvl: &LogLevel, s: &str) -> String {
     let padded = format!(" {} ", s.trim());
     match lvl {
         LogLevel::Error => {
-            let style = Style::new().bold().bright_red().on_red();
+            let style = Style::new().bold().bright_red();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Warn => {
-            let style = Style::new().bold().bright_yellow().on_yellow();
+            let style = Style::new().bold().bright_yellow();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Info => {
-            let style = Style::new().bold().bright_green().on_green();
+            let style = Style::new().bold().bright_green();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Debug => {
-            let style = Style::new().bold().bright_blue().on_blue();
+            let style = Style::new().bold().bright_blue();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Trace => {
-            let style = Style::new().bright_black().on_black();
+            let style = Style::new().bright_black();
             format!("{}", padded.if_supports_color(Stdout, |t| t.style(style)))
         }
         LogLevel::Unknown(_) => s.to_string(),
@@ -179,6 +186,11 @@ pub fn shorten_timestamp(ts: &str) -> String {
         }
     }
     ts.chars().take(19).collect()
+}
+
+fn contains_error_keyword(msg: &str) -> bool {
+    msg.contains("error") || msg.contains("Error") || msg.contains("ERROR")
+        || msg.contains("err") || msg.contains("Err")
 }
 
 fn expand_value(v: &serde_json::Value) -> String {
@@ -296,5 +308,14 @@ mod tests {
         let out = render_raw("some raw log", &continuations, true);
         assert!(out.contains("some raw log"));
         assert!(out.contains("\n  trace: xyz"));
+    }
+
+    #[test]
+    fn highlight_errors_flag_kept_in_normal_mode() {
+        let mut cfg = Config::default();
+        cfg.highlight_errors = true;
+        let line = simple_line(LogLevel::Info, "connection error occurred");
+        let out = render(&line, &cfg, true);
+        assert!(out.contains("connection error occurred"));
     }
 }

@@ -5,13 +5,13 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Cell, Paragraph, Row, Table},
     Frame, Terminal,
 };
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
-            DisableMouseCapture, EnableMouseCapture},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+            DisableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -25,20 +25,15 @@ pub enum Column {
     Time,
     Level,
     Message,
-    Service,
-    Label,
-    TraceId,
 }
 
 impl Column {
+    #[cfg(test)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "time"     => Some(Column::Time),
             "level"    => Some(Column::Level),
             "message"  => Some(Column::Message),
-            "service"  => Some(Column::Service),
-            "label"    => Some(Column::Label),
-            "trace_id" => Some(Column::TraceId),
             _          => None,
         }
     }
@@ -48,9 +43,6 @@ impl Column {
             Column::Time     => "TIME",
             Column::Level    => "LEVEL",
             Column::Message  => "MESSAGE",
-            Column::Service  => "SERVICE",
-            Column::Label    => "LABEL",
-            Column::TraceId  => "TRACE-ID",
         }
     }
 
@@ -60,9 +52,6 @@ impl Column {
             Column::Time     => Some(8),
             Column::Level    => Some(7),
             Column::Message  => None,  // takes remainder
-            Column::Service  => Some(12),
-            Column::Label    => Some(10),
-            Column::TraceId  => Some(14),
         }
     }
 }
@@ -106,40 +95,44 @@ impl ColWidths {
 // --- App state ---
 
 pub struct App {
-    pub rows: Vec<ClassifiedLine>,
+    pub rows: Vec<TableRowData>,
     pub scroll_offset: usize,
     pub selected: usize,
-    pub expanded: Option<usize>,
     pub paused: bool,
     pub new_count: usize,
     pub col_widths: ColWidths,
     pub columns: Vec<Column>,
-    pub show_extras_in_detail: bool,
     pub visible_height: u16,
+    pub highlight_errors: bool,
+}
+
+pub struct TableRowData {
+    pub line: ClassifiedLine,
+    pub detail_pairs: Vec<(String, String)>,
 }
 
 impl App {
     pub fn new(config: &Config, show_extras: bool, terminal_width: u16, visible_height: u16) -> Self {
-        let columns: Vec<Column> = config.table.columns.iter()
-            .filter_map(|s| Column::from_str(s))
-            .collect();
+        let _ = show_extras;
+        let _ = config;
+        let columns: Vec<Column> = vec![Column::Time, Column::Level, Column::Message];
         let col_widths = ColWidths::compute(&columns, terminal_width);
         App {
             rows: Vec::new(),
             scroll_offset: 0,
             selected: 0,
-            expanded: None,
             paused: false,
             new_count: 0,
             col_widths,
             columns,
-            show_extras_in_detail: show_extras,
             visible_height,
+            highlight_errors: config.highlight_errors,
         }
     }
 
     pub fn push_row(&mut self, row: ClassifiedLine) {
-        self.rows.push(row);
+        let detail_pairs = collect_detail_pairs(&row);
+        self.rows.push(TableRowData { line: row, detail_pairs });
         if !self.paused {
             self.selected = self.rows.len() - 1;
             self.adjust_scroll_offset();
@@ -161,7 +154,7 @@ impl App {
     pub fn scroll_down(&mut self) {
         if self.selected + 1 < self.rows.len() {
             self.selected += 1;
-            self.adjust_scroll_offset();
+            self.ensure_selected_visible();
         }
     }
 
@@ -174,11 +167,11 @@ impl App {
         }
     }
 
-    pub fn toggle_expand(&mut self) {
-        match self.expanded {
-            Some(i) if i == self.selected => self.expanded = None,
-            _ => self.expanded = Some(self.selected),
-        }
+    pub fn jump_to_start(&mut self) {
+        self.paused = true;
+        self.new_count = 0;
+        self.selected = 0;
+        self.scroll_offset = 0;
     }
 
     pub fn toggle_pause(&mut self) {
@@ -194,16 +187,68 @@ impl App {
             self.scroll_offset = self.selected + 1 - self.visible_height as usize;
         }
     }
+
+    fn ensure_selected_visible(&mut self) {
+        if self.rows.is_empty() {
+            self.scroll_offset = 0;
+            return;
+        }
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+            return;
+        }
+        while self.scroll_offset < self.selected {
+            let used_height: u16 = (self.scroll_offset..=self.selected)
+                .map(|idx| self.row_height(idx))
+                .sum();
+            if used_height <= self.visible_height {
+                break;
+            }
+            self.scroll_offset += 1;
+        }
+    }
+
+    fn row_height(&self, idx: usize) -> u16 {
+        let max_w = self.col_widths.width_of(&Column::Message).max(16) as usize;
+        1 + compact_line_count(&self.rows[idx].detail_pairs, max_w) as u16
+    }
+
+    fn row_at_screen_y(&self, y: u16) -> Option<usize> {
+        // Layout: row 0 header, [1..] data rows, last row status bar.
+        if y == 0 || y > self.visible_height {
+            return None;
+        }
+        let target = y - 1;
+        let mut cursor_y: u16 = 0;
+        let mut idx = self.scroll_offset;
+        while idx < self.rows.len() && cursor_y < self.visible_height {
+            let h = self.row_height(idx);
+            if target < cursor_y + h {
+                return Some(idx);
+            }
+            cursor_y = cursor_y.saturating_add(h);
+            idx += 1;
+        }
+        None
+    }
+
+    pub fn click_select_or_expand(&mut self, y: u16) {
+        if let Some(idx) = self.row_at_screen_y(y) {
+            self.paused = true;
+            self.selected = idx;
+            self.ensure_selected_visible();
+        }
+    }
 }
 
 /// Returns ratatui fg+bg Style for a log level badge.
 fn level_style(lvl: &LogLevel) -> Style {
     match lvl {
-        LogLevel::Error => Style::default().fg(Color::LightRed).bg(Color::Red),
-        LogLevel::Warn  => Style::default().fg(Color::Yellow).bg(Color::Rgb(100, 70, 0)),
-        LogLevel::Info  => Style::default().fg(Color::LightGreen).bg(Color::Green),
-        LogLevel::Debug => Style::default().fg(Color::LightBlue).bg(Color::Blue),
-        LogLevel::Trace => Style::default().fg(Color::DarkGray).bg(Color::Black),
+        LogLevel::Error => Style::default().fg(Color::LightRed),
+        LogLevel::Warn  => Style::default().fg(Color::Yellow),
+        LogLevel::Info  => Style::default().fg(Color::LightGreen),
+        LogLevel::Debug => Style::default().fg(Color::LightBlue),
+        LogLevel::Trace => Style::default().fg(Color::DarkGray),
         LogLevel::Unknown(_) => Style::default(),
     }
 }
@@ -227,18 +272,7 @@ fn cell_value(col: &Column, row: &ClassifiedLine) -> String {
             .unwrap_or_default(),
         Column::Level => String::new(), // rendered specially as a styled cell
         Column::Message => row.message.clone().unwrap_or_default(),
-        Column::Service => extras_get(row, "service"),
-        Column::Label   => extras_get(row, "label"),
-        Column::TraceId => row.trace_id.clone()
-            .unwrap_or_else(|| extras_get(row, "trace_id")),
     }
-}
-
-fn extras_get(row: &ClassifiedLine, key: &str) -> String {
-    row.extras.iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| value_to_string(v))
-        .unwrap_or_else(|| "—".to_string())
 }
 
 /// Truncate a string to `max_chars`, appending "…" if cut.
@@ -288,25 +322,28 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_rows(f: &mut Frame, app: &App, area: Rect) {
     let widths = col_constraints(app);
-    let visible_end = (app.scroll_offset + area.height as usize).min(app.rows.len());
-    let visible_rows = &app.rows[app.scroll_offset..visible_end];
+    let mut visible_indices: Vec<usize> = Vec::new();
+    let mut consumed_height: u16 = 0;
+    let mut idx = app.scroll_offset;
+    while idx < app.rows.len() {
+        let h = app.row_height(idx);
+        if consumed_height + h > area.height {
+            break;
+        }
+        visible_indices.push(idx);
+        consumed_height += h;
+        idx += 1;
+    }
 
-    let rows: Vec<Row> = visible_rows.iter().enumerate().map(|(rel_idx, row)| {
-        let abs_idx = app.scroll_offset + rel_idx;
-        let is_selected = abs_idx == app.selected;
-        let is_expanded = app.expanded == Some(abs_idx);
+    let rows: Vec<Row> = visible_indices.iter().map(|abs_idx| {
+        let row = &app.rows[*abs_idx].line;
+        let detail_pairs = &app.rows[*abs_idx].detail_pairs;
+        let is_selected = *abs_idx == app.selected;
 
         let base_style = if is_selected {
             Style::default().bg(Color::Rgb(30, 41, 59))
         } else {
             Style::default()
-        };
-
-        // Compute detail lines once (empty if not expanded)
-        let detail_lines = if is_expanded {
-            build_detail_lines(row, app.show_extras_in_detail)
-        } else {
-            vec![]
         };
 
         let cells: Vec<Cell> = app.columns.iter().map(|col| {
@@ -319,37 +356,39 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 let max_w = app.col_widths.width_of(col) as usize;
                 let raw = cell_value(col, row);
-                let text = if *col == Column::Message {
-                    if is_expanded {
-                        if detail_lines.is_empty() {
-                            raw
-                        } else {
-                            format!("{}\n{}", raw, detail_lines.join("\n"))
-                        }
+                if *col == Column::Message {
+                    let key_style = Style::default().fg(Color::Yellow);
+                    let value_style = Style::default().fg(Color::DarkGray);
+                    let is_error_keyword = app.highlight_errors
+                        && contains_error_keyword(&raw);
+                    let message_style = if is_error_keyword {
+                        Style::default().fg(Color::LightRed)
                     } else {
-                        truncate(&raw, max_w)
-                    }
+                        match &row.level {
+                            Some(LogLevel::Error) => Style::default().fg(Color::LightRed),
+                            _ => Style::default().fg(Color::White),
+                        }
+                    };
+                    let mut lines = vec![Line::from(Span::styled(raw, message_style))];
+                    lines.extend(build_compact_detail_lines(
+                        detail_pairs,
+                        max_w.max(16),
+                        key_style,
+                        value_style,
+                    ));
+                    let text = Text::from(lines);
+                    Cell::from(text).style(base_style)
                 } else {
-                    raw
-                };
-                let cell_style = if *col == Column::Message {
-                    match &row.level {
-                        Some(LogLevel::Error) => base_style.fg(Color::LightRed),
-                        _ => base_style.fg(Color::White),
-                    }
-                } else {
-                    base_style.fg(Color::DarkGray)
-                };
-                Cell::from(text).style(cell_style)
+                    let text = truncate(&raw, max_w);
+                    let cell_style = base_style.fg(Color::DarkGray);
+                    Cell::from(text).style(cell_style)
+                }
             }
         }).collect();
 
         let mut table_row = Row::new(cells).style(base_style);
-
-        if is_expanded && !detail_lines.is_empty() {
-            let detail_height = 1 + detail_lines.len() as u16;
-            table_row = table_row.height(detail_height);
-        }
+        let detail_line_count = compact_line_count(detail_pairs, app.col_widths.width_of(&Column::Message).max(16) as usize);
+        table_row = table_row.height(1 + detail_line_count as u16);
 
         table_row
     }).collect();
@@ -358,27 +397,95 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(table, area);
 }
 
-fn build_detail_lines(row: &ClassifiedLine, show_extras: bool) -> Vec<String> {
-    let mut lines = Vec::new();
-
-    if let Some(ref msg) = row.message {
-        lines.push(format!("  msg: {}", msg));
-    }
+fn collect_detail_pairs(row: &ClassifiedLine) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
     if let Some(ref tid) = row.trace_id {
-        lines.push(format!("  trace_id: {}", tid));
+        pairs.push(("trace_id".to_string(), tid.clone()));
     }
     if let Some(ref c) = row.caller {
-        lines.push(format!("  caller: {}", c));
+        pairs.push(("caller".to_string(), c.clone()));
     }
-    if show_extras {
-        for (k, v) in &row.extras {
-            lines.push(format!("  {}: {}", k, value_to_string(v)));
+    for (k, v) in &row.extras {
+        pairs.push((k.clone(), value_to_string(v)));
+    }
+    for (i, cont) in row.continuation_lines.iter().enumerate() {
+        pairs.push((format!("continuation_{:02}", i + 1), cont.clone()));
+    }
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    pairs
+}
+
+fn build_compact_detail_lines(
+    detail_pairs: &[(String, String)],
+    max_width: usize,
+    key_style: Style,
+    value_style: Style,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut current: Vec<(String, String, usize)> = Vec::new();
+    let mut current_width: usize = 0;
+
+    for (k, v) in detail_pairs {
+        let token = format!("{}: {}", k, v);
+        let token_width = token.chars().count();
+        let sep_width = if current.is_empty() { 0 } else { 1 };
+        let candidate_width = current_width + sep_width + token_width;
+        if !current.is_empty() && candidate_width > max_width {
+            lines.push(pairs_to_line(&current, key_style, value_style));
+            current.clear();
+            current_width = 0;
         }
+        if !current.is_empty() {
+            current_width += 1;
+        }
+        current_width += token_width;
+        current.push((k.clone(), v.clone(), token_width));
     }
-    for cont in &row.continuation_lines {
-        lines.push(format!("    {}", cont));
+    if !current.is_empty() {
+        lines.push(pairs_to_line(&current, key_style, value_style));
     }
     lines
+}
+
+fn pairs_to_line(
+    pairs: &[(String, String, usize)],
+    key_style: Style,
+    value_style: Style,
+) -> Line<'static> {
+    let mut spans = vec![];
+    for (idx, (k, v, _)) in pairs.iter().enumerate() {
+        if idx > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(format!("{}:", k), key_style));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(v.clone(), value_style));
+    }
+    Line::from(spans)
+}
+
+fn compact_line_count(detail_pairs: &[(String, String)], max_width: usize) -> usize {
+    if detail_pairs.is_empty() {
+        return 0;
+    }
+    let mut lines = 1usize;
+    let mut current_width = 0usize;
+    for (k, v) in detail_pairs {
+        let token_width = format!("{}: {}", k, v).chars().count();
+        let sep_width = if current_width == 0 { 0 } else { 1 };
+        if current_width != 0 && current_width + sep_width + token_width > max_width {
+            lines += 1;
+            current_width = token_width;
+        } else {
+            current_width += sep_width + token_width;
+        }
+    }
+    lines
+}
+
+fn contains_error_keyword(msg: &str) -> bool {
+    msg.contains("error") || msg.contains("Error") || msg.contains("ERROR")
+        || msg.contains("err") || msg.contains("Err")
 }
 
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
@@ -401,7 +508,7 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let left = format!(
-        "↑↓/wheel scroll · Enter expand · Space pause · End latest · q quit{}",
+        "↑↓/wheel scroll · g/Home top · G/End latest · q quit{}",
         new_notice
     );
 
@@ -420,26 +527,46 @@ pub enum AppEvent {
     LogLine(ClassifiedLine),
     RawLine(String),
     Eof,
-    Term(Event),
 }
 
 /// Handle a terminal event. Returns false if the app should quit.
 pub fn handle_event(app: &mut App, event: Event) -> bool {
     match event {
-        Event::Key(KeyEvent { code, modifiers, .. }) => match code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => return false,
-            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return false,
-            KeyCode::Up   => app.scroll_up(),
-            KeyCode::Down => app.scroll_down(),
-            KeyCode::End  => app.jump_to_end(),
-            KeyCode::Char('G') => app.jump_to_end(),
-            KeyCode::Enter => app.toggle_expand(),
-            KeyCode::Char(' ') => app.toggle_pause(),
-            _ => {}
-        },
-        Event::Mouse(MouseEvent { kind, .. }) => match kind {
+        Event::Key(KeyEvent { code, modifiers, kind, .. }) => {
+            if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
+                return true;
+            }
+            match code {
+                KeyCode::Char('q') if modifiers.contains(KeyModifiers::SUPER) => return false,
+                KeyCode::Char('q') | KeyCode::Char('Q') => return false,
+                KeyCode::Up => {
+                    app.scroll_up();
+                }
+                KeyCode::Down => {
+                    app.scroll_down();
+                }
+                KeyCode::Home => {
+                    app.jump_to_start();
+                }
+                KeyCode::End => {
+                    app.jump_to_end();
+                }
+                KeyCode::Char('g') => {
+                    app.jump_to_start();
+                }
+                KeyCode::Char('G') => {
+                    app.jump_to_end();
+                }
+                KeyCode::Char(' ') => {
+                    app.toggle_pause();
+                }
+                _ => {}
+            }
+        }
+        Event::Mouse(MouseEvent { kind, row, .. }) => match kind {
             MouseEventKind::ScrollUp   => app.scroll_up(),
             MouseEventKind::ScrollDown => app.scroll_down(),
+            MouseEventKind::Down(MouseButton::Left) => app.click_select_or_expand(row),
             _ => {}
         },
         _ => {}
@@ -455,7 +582,9 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
     // --- Terminal setup ---
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    // Keep terminal selection/copy behavior available by default.
+    // Capturing mouse in alternate screen often prevents drag-to-copy in terminal emulators.
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -465,10 +594,10 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
 
     let mut app = App::new(config, show_extras, size.width, visible_height);
 
-    let (tx, rx) = mpsc::channel::<AppEvent>();
+    let (tx_log, rx_log) = mpsc::channel::<AppEvent>();
 
     // Stdin reader thread
-    let tx_log = tx.clone();
+    let tx_logs = tx_log.clone();
     let cfg = config.clone();
     thread::spawn(move || {
         let stdin = io::stdin();
@@ -480,29 +609,11 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
                 }
                 ParseResult::Raw { line, .. } => AppEvent::RawLine(line),
             };
-            if tx_log.send(ev).is_err() {
+            if tx_logs.send(ev).is_err() {
                 break;
             }
         }
-        let _ = tx_log.send(AppEvent::Eof);
-    });
-
-    // Terminal event thread
-    let tx_term = tx;
-    thread::spawn(move || {
-        loop {
-            match event::poll(std::time::Duration::from_millis(50)) {
-                Ok(true) => {
-                    if let Ok(ev) = event::read() {
-                        if tx_term.send(AppEvent::Term(ev)).is_err() {
-                            break;
-                        }
-                    }
-                }
-                Ok(false) => {}
-                Err(_) => break,
-            }
-        }
+        let _ = tx_logs.send(AppEvent::Eof);
     });
 
     // Main render loop — extracted so teardown always runs
@@ -511,27 +622,66 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
         while running {
             terminal.draw(|f| render_ui(f, &app))?;
 
-            match rx.recv_timeout(std::time::Duration::from_millis(16)) {
-                Ok(AppEvent::LogLine(line)) => app.push_row(line),
-                Ok(AppEvent::RawLine(raw)) => {
-                    app.push_row(ClassifiedLine {
-                        level: None,
-                        timestamp: None,
-                        message: Some(raw),
-                        trace_id: None,
-                        caller: None,
-                        extras: vec![],
-                        continuation_lines: vec![],
-                    });
-                }
-                Ok(AppEvent::Eof) => {}
-                Ok(AppEvent::Term(ev)) => {
-                    if !handle_event(&mut app, ev) {
-                        running = false;
+            // Poll keyboard/mouse in the main thread.
+            // On Windows consoles this is more reliable than reading events in a worker thread.
+            match event::poll(std::time::Duration::from_millis(1)) {
+                Ok(true) => {
+                    if let Ok(ev) = event::read() {
+                        if !handle_event(&mut app, ev) {
+                            running = false;
+                            continue;
+                        }
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+                Ok(false) => {}
+                Err(_) => {}
+            }
+
+            // Then process a bounded batch of log events each frame.
+            let mut processed_logs = 0usize;
+            while processed_logs < 256 {
+                match rx_log.try_recv() {
+                    Ok(AppEvent::LogLine(line)) => app.push_row(line),
+                    Ok(AppEvent::RawLine(raw)) => {
+                        app.push_row(ClassifiedLine {
+                            level: None,
+                            timestamp: None,
+                            message: Some(raw),
+                            trace_id: None,
+                            caller: None,
+                            extras: vec![],
+                            continuation_lines: vec![],
+                        });
+                    }
+                    Ok(AppEvent::Eof) => {}
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        running = false;
+                        break;
+                    }
+                }
+                processed_logs += 1;
+            }
+
+            // If there were no pending logs, block briefly to avoid a tight loop.
+            if processed_logs == 0 {
+                match rx_log.recv_timeout(std::time::Duration::from_millis(16)) {
+                    Ok(AppEvent::LogLine(line)) => app.push_row(line),
+                    Ok(AppEvent::RawLine(raw)) => {
+                        app.push_row(ClassifiedLine {
+                            level: None,
+                            timestamp: None,
+                            message: Some(raw),
+                            trace_id: None,
+                            caller: None,
+                            extras: vec![],
+                            continuation_lines: vec![],
+                        });
+                    }
+                    Ok(AppEvent::Eof) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+                }
             }
         }
         Ok(())
@@ -558,9 +708,9 @@ mod tests {
         assert_eq!(Column::from_str("time"), Some(Column::Time));
         assert_eq!(Column::from_str("level"), Some(Column::Level));
         assert_eq!(Column::from_str("message"), Some(Column::Message));
-        assert_eq!(Column::from_str("service"), Some(Column::Service));
-        assert_eq!(Column::from_str("label"), Some(Column::Label));
-        assert_eq!(Column::from_str("trace_id"), Some(Column::TraceId));
+        assert_eq!(Column::from_str("service"), None);
+        assert_eq!(Column::from_str("label"), None);
+        assert_eq!(Column::from_str("trace_id"), None);
         assert_eq!(Column::from_str("unknown"), None);
     }
 
@@ -570,9 +720,8 @@ mod tests {
             Column::Time,
             Column::Level,
             Column::Message,
-            Column::Service,
         ];
-        // time=8, level=7, service=12, separators=4 → fixed=31, message=100-31=69
+        // time=8, level=7, separators=2 -> fixed=15, message=85
         let cw = ColWidths::compute(&columns, 100);
         let msg_width = cw.width_of(&Column::Message);
         assert!(msg_width >= 20, "message column got {}", msg_width);
@@ -631,14 +780,12 @@ mod tests {
     }
 
     #[test]
-    fn app_toggle_expand_sets_and_clears() {
+    fn app_click_select_sets_selected_row() {
         let config = Config::default();
         let mut app = App::new(&config, false, 200, 20);
         app.push_row(make_row("hello".into()));
-        app.toggle_expand();
-        assert_eq!(app.expanded, Some(0));
-        app.toggle_expand();
-        assert_eq!(app.expanded, None);
+        app.click_select_or_expand(1);
+        assert_eq!(app.selected, 0);
     }
 
     fn make_row(msg: String) -> ClassifiedLine {

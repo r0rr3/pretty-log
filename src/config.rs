@@ -78,9 +78,6 @@ impl Default for TableConfig {
                 "time".into(),
                 "level".into(),
                 "message".into(),
-                "service".into(),
-                "label".into(),
-                "trace_id".into(),
             ],
             show_extras_in_detail: false,
         }
@@ -198,9 +195,7 @@ mod tests {
     #[test]
     fn default_table_config_has_expected_columns() {
         let cfg = Config::default();
-        assert_eq!(cfg.table.columns, vec![
-            "time", "level", "message", "service", "label", "trace_id"
-        ]);
+        assert_eq!(cfg.table.columns, vec!["time", "level", "message"]);
         assert!(!cfg.table.show_extras_in_detail);
     }
 }
