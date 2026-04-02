@@ -466,7 +466,6 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
     let mut app = App::new(config, show_extras, size.width, visible_height);
 
     let (tx_log, rx_log) = mpsc::channel::<AppEvent>();
-    let (tx_term, rx_term) = mpsc::channel::<Event>();
 
     // Stdin reader thread
     let tx_logs = tx_log.clone();
@@ -488,42 +487,25 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
         let _ = tx_logs.send(AppEvent::Eof);
     });
 
-    // Terminal event thread
-    thread::spawn(move || {
-        loop {
-            match event::poll(std::time::Duration::from_millis(50)) {
-                Ok(true) => {
-                    if let Ok(ev) = event::read() {
-                        if tx_term.send(ev).is_err() {
-                            break;
-                        }
-                    }
-                }
-                Ok(false) => {}
-                Err(_) => {
-                    // On some platforms, poll may briefly error (e.g. piped stdin).
-                    // Sleep and retry to keep the thread alive for user interaction.
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            }
-        }
-    });
-
     // Main render loop — extracted so teardown always runs
     let result = (|| {
         let mut running = true;
         while running {
             terminal.draw(|f| render_ui(f, &app))?;
 
-            // Always process terminal input first to keep UI responsive under high log throughput.
-            while let Ok(ev) = rx_term.try_recv() {
-                if !handle_event(&mut app, ev) {
-                    running = false;
-                    break;
+            // Poll keyboard/mouse in the main thread.
+            // On Windows consoles this is more reliable than reading events in a worker thread.
+            match event::poll(std::time::Duration::from_millis(1)) {
+                Ok(true) => {
+                    if let Ok(ev) = event::read() {
+                        if !handle_event(&mut app, ev) {
+                            running = false;
+                            continue;
+                        }
+                    }
                 }
-            }
-            if !running {
-                break;
+                Ok(false) => {}
+                Err(_) => {}
             }
 
             // Then process a bounded batch of log events each frame.
