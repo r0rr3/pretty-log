@@ -10,8 +10,8 @@ use ratatui::{
     Frame, Terminal,
 };
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
-            DisableMouseCapture, EnableMouseCapture},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+            DisableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -116,6 +116,7 @@ pub struct App {
     pub columns: Vec<Column>,
     pub show_extras_in_detail: bool,
     pub visible_height: u16,
+    pub pending_g: bool,
 }
 
 impl App {
@@ -135,6 +136,7 @@ impl App {
             columns,
             show_extras_in_detail: show_extras,
             visible_height,
+            pending_g: false,
         }
     }
 
@@ -165,6 +167,28 @@ impl App {
         }
     }
 
+    pub fn page_up(&mut self) {
+        if self.selected == 0 {
+            return;
+        }
+        let step = self.visible_height.max(1) as usize;
+        self.selected = self.selected.saturating_sub(step);
+        self.paused = true;
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        }
+    }
+
+    pub fn page_down(&mut self) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let step = self.visible_height.max(1) as usize;
+        let max_idx = self.rows.len() - 1;
+        self.selected = (self.selected + step).min(max_idx);
+        self.adjust_scroll_offset();
+    }
+
     pub fn jump_to_end(&mut self) {
         self.paused = false;
         self.new_count = 0;
@@ -172,6 +196,13 @@ impl App {
             self.selected = self.rows.len() - 1;
             self.adjust_scroll_offset();
         }
+    }
+
+    pub fn jump_to_start(&mut self) {
+        self.paused = true;
+        self.new_count = 0;
+        self.selected = 0;
+        self.scroll_offset = 0;
     }
 
     pub fn toggle_expand(&mut self) {
@@ -192,6 +223,49 @@ impl App {
     fn adjust_scroll_offset(&mut self) {
         if self.selected >= self.scroll_offset + self.visible_height as usize {
             self.scroll_offset = self.selected + 1 - self.visible_height as usize;
+        }
+    }
+
+    fn row_height(&self, idx: usize) -> u16 {
+        if self.expanded == Some(idx) {
+            let details = build_detail_lines(&self.rows[idx], self.show_extras_in_detail);
+            1 + details.len() as u16
+        } else {
+            1
+        }
+    }
+
+    fn row_at_screen_y(&self, y: u16) -> Option<usize> {
+        // Layout: row 0 header, [1..] data rows, last row status bar.
+        if y == 0 || y > self.visible_height {
+            return None;
+        }
+        let target = y - 1;
+        let mut cursor_y: u16 = 0;
+        let mut idx = self.scroll_offset;
+        while idx < self.rows.len() && cursor_y < self.visible_height {
+            let h = self.row_height(idx);
+            if target < cursor_y + h {
+                return Some(idx);
+            }
+            cursor_y = cursor_y.saturating_add(h);
+            idx += 1;
+        }
+        None
+    }
+
+    pub fn click_select_or_expand(&mut self, y: u16) {
+        if let Some(idx) = self.row_at_screen_y(y) {
+            self.paused = true;
+            if self.selected == idx {
+                self.toggle_expand();
+            } else {
+                self.selected = idx;
+                self.expanded = Some(idx);
+            }
+            if self.selected < self.scroll_offset {
+                self.scroll_offset = self.selected;
+            }
         }
     }
 }
@@ -401,7 +475,7 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let left = format!(
-        "↑↓/wheel scroll · Enter expand · Space pause · End latest · q/Ctrl+C/Ctrl+D quit{}",
+        "↑↓/j/k/PgUp/PgDn scroll · Enter/o expand · gg/Home top · G/End latest · q/Ctrl+C/Ctrl+D quit{}",
         new_notice
     );
 
@@ -425,21 +499,72 @@ pub enum AppEvent {
 /// Handle a terminal event. Returns false if the app should quit.
 pub fn handle_event(app: &mut App, event: Event) -> bool {
     match event {
-        Event::Key(KeyEvent { code, modifiers, .. }) => match code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => return false,
-            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return false,
-            KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => return false,
-            KeyCode::Up   => app.scroll_up(),
-            KeyCode::Down => app.scroll_down(),
-            KeyCode::End  => app.jump_to_end(),
-            KeyCode::Char('G') => app.jump_to_end(),
-            KeyCode::Enter => app.toggle_expand(),
-            KeyCode::Char(' ') => app.toggle_pause(),
-            _ => {}
-        },
-        Event::Mouse(MouseEvent { kind, .. }) => match kind {
+        Event::Key(KeyEvent { code, modifiers, kind, .. }) => {
+            if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
+                return true;
+            }
+            match code {
+                KeyCode::Char('q') if modifiers.contains(KeyModifiers::SUPER) => return false,
+                KeyCode::Char('q') | KeyCode::Char('Q') => return false,
+                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return false,
+                KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => return false,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.pending_g = false;
+                    app.scroll_up();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.pending_g = false;
+                    app.scroll_down();
+                }
+                KeyCode::PageUp => {
+                    app.pending_g = false;
+                    app.page_up();
+                }
+                KeyCode::PageDown => {
+                    app.pending_g = false;
+                    app.page_down();
+                }
+                KeyCode::Home => {
+                    app.pending_g = false;
+                    app.jump_to_start();
+                }
+                KeyCode::End => {
+                    app.pending_g = false;
+                    app.jump_to_end();
+                }
+                KeyCode::Char('g') => {
+                    if app.pending_g {
+                        app.jump_to_start();
+                        app.pending_g = false;
+                    } else {
+                        app.pending_g = true;
+                    }
+                }
+                KeyCode::Char('G') => {
+                    app.pending_g = false;
+                    app.jump_to_end();
+                }
+                KeyCode::Enter | KeyCode::Char('o') => {
+                    app.pending_g = false;
+                    app.toggle_expand();
+                }
+                KeyCode::Esc => {
+                    app.pending_g = false;
+                    app.expanded = None;
+                }
+                KeyCode::Char(' ') => {
+                    app.pending_g = false;
+                    app.toggle_pause();
+                }
+                _ => {
+                    app.pending_g = false;
+                }
+            }
+        }
+        Event::Mouse(MouseEvent { kind, row, .. }) => match kind {
             MouseEventKind::ScrollUp   => app.scroll_up(),
             MouseEventKind::ScrollDown => app.scroll_down(),
+            MouseEventKind::Down(MouseButton::Left) => app.click_select_or_expand(row),
             _ => {}
         },
         _ => {}
@@ -455,7 +580,9 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
     // --- Terminal setup ---
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    // Keep terminal selection/copy behavior available by default.
+    // Capturing mouse in alternate screen often prevents drag-to-copy in terminal emulators.
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 

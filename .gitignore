@@ -28,3 +28,4 @@ Thumbs.db
 # Test outputs and logs
 app.log
 .superpowers/
+table-test.log
