@@ -1,6 +1,20 @@
-use crate::classifier::ClassifiedLine;
-use crate::config::Config;
 use std::io;
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Cell, Paragraph, Row, Table},
+    Frame, Terminal,
+};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+            DisableMouseCapture, EnableMouseCapture},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use crate::classifier::{ClassifiedLine, LogLevel, value_to_string};
+use crate::config::Config;
 
 // --- Column enum ---
 
@@ -178,6 +192,208 @@ impl App {
             self.scroll_offset = self.selected + 1 - self.visible_height as usize;
         }
     }
+}
+
+/// Returns ratatui fg+bg Style for a log level badge.
+fn level_style(lvl: &LogLevel) -> Style {
+    match lvl {
+        LogLevel::Error => Style::default().fg(Color::LightRed).bg(Color::Red),
+        LogLevel::Warn  => Style::default().fg(Color::Yellow).bg(Color::Rgb(100, 70, 0)),
+        LogLevel::Info  => Style::default().fg(Color::LightGreen).bg(Color::Green),
+        LogLevel::Debug => Style::default().fg(Color::LightBlue).bg(Color::Blue),
+        LogLevel::Trace => Style::default().fg(Color::DarkGray).bg(Color::Black),
+        LogLevel::Unknown(_) => Style::default(),
+    }
+}
+
+fn level_text(lvl: &LogLevel) -> &'static str {
+    match lvl {
+        LogLevel::Error   => " ERR ",
+        LogLevel::Warn    => " WRN ",
+        LogLevel::Info    => " INF ",
+        LogLevel::Debug   => " DBG ",
+        LogLevel::Trace   => " TRC ",
+        LogLevel::Unknown(_) => " ??? ",
+    }
+}
+
+/// Extract value for a given column from a ClassifiedLine.
+fn cell_value(col: &Column, row: &ClassifiedLine) -> String {
+    match col {
+        Column::Time => row.timestamp.as_deref()
+            .map(crate::renderer::shorten_timestamp)
+            .unwrap_or_default(),
+        Column::Level => String::new(), // rendered specially as a styled cell
+        Column::Message => row.message.clone().unwrap_or_default(),
+        Column::Service => extras_get(row, "service"),
+        Column::Label   => extras_get(row, "label"),
+        Column::TraceId => row.trace_id.clone()
+            .unwrap_or_else(|| extras_get(row, "trace_id")),
+    }
+}
+
+fn extras_get(row: &ClassifiedLine, key: &str) -> String {
+    row.extras.iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| value_to_string(v))
+        .unwrap_or_else(|| "—".to_string())
+}
+
+/// Truncate a string to `max_chars`, appending "…" if cut.
+fn truncate(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        s.to_string()
+    } else {
+        let cut: String = chars[..max_chars.saturating_sub(1)].iter().collect();
+        format!("{}…", cut)
+    }
+}
+
+fn col_constraints(app: &App) -> Vec<Constraint> {
+    app.col_widths.widths.iter()
+        .map(|(_, w)| Constraint::Length(*w))
+        .collect()
+}
+
+pub fn render_ui(f: &mut Frame, app: &App) {
+    let size = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // header
+            Constraint::Min(0),    // rows
+            Constraint::Length(1), // status bar
+        ])
+        .split(size);
+
+    render_header(f, app, chunks[0]);
+    render_rows(f, app, chunks[1]);
+    render_status(f, app, chunks[2]);
+}
+
+fn render_header(f: &mut Frame, app: &App, area: Rect) {
+    let header_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
+    let cells: Vec<Cell> = app.columns.iter().map(|col| {
+        Cell::from(col.header()).style(header_style)
+    }).collect();
+    let header = Row::new(cells).height(1);
+    let widths = col_constraints(app);
+    let table = Table::new(vec![header], widths)
+        .block(Block::default());
+    f.render_widget(table, area);
+}
+
+fn render_rows(f: &mut Frame, app: &App, area: Rect) {
+    let widths = col_constraints(app);
+    let visible_end = (app.scroll_offset + area.height as usize).min(app.rows.len());
+    let visible_rows = &app.rows[app.scroll_offset..visible_end];
+
+    let rows: Vec<Row> = visible_rows.iter().enumerate().map(|(rel_idx, row)| {
+        let abs_idx = app.scroll_offset + rel_idx;
+        let is_selected = abs_idx == app.selected;
+        let is_expanded = app.expanded == Some(abs_idx);
+
+        let base_style = if is_selected {
+            Style::default().bg(Color::Rgb(30, 41, 59))
+        } else {
+            Style::default()
+        };
+
+        let cells: Vec<Cell> = app.columns.iter().map(|col| {
+            if *col == Column::Level {
+                let (text, style) = match &row.level {
+                    Some(lvl) => (level_text(lvl), level_style(lvl)),
+                    None => (" ??? ", Style::default()),
+                };
+                Cell::from(text).style(style)
+            } else {
+                let max_w = app.col_widths.width_of(col) as usize;
+                let raw = cell_value(col, row);
+                let text = if *col == Column::Message && !is_expanded {
+                    truncate(&raw, max_w)
+                } else {
+                    raw
+                };
+                let cell_style = if *col == Column::Message {
+                    match &row.level {
+                        Some(LogLevel::Error) => base_style.fg(Color::LightRed),
+                        _ => base_style.fg(Color::White),
+                    }
+                } else {
+                    base_style.fg(Color::DarkGray)
+                };
+                Cell::from(text).style(cell_style)
+            }
+        }).collect();
+
+        let mut table_row = Row::new(cells).style(base_style);
+
+        if is_expanded {
+            let detail = build_detail_lines(row, app.show_extras_in_detail);
+            let detail_height = 1 + detail.len() as u16;
+            table_row = table_row.height(detail_height);
+        }
+
+        table_row
+    }).collect();
+
+    let table = Table::new(rows, widths);
+    f.render_widget(table, area);
+}
+
+fn build_detail_lines(row: &ClassifiedLine, show_extras: bool) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    if let Some(ref msg) = row.message {
+        lines.push(format!("  msg: {}", msg));
+    }
+    if let Some(ref tid) = row.trace_id {
+        lines.push(format!("  trace_id: {}", tid));
+    }
+    if let Some(ref c) = row.caller {
+        lines.push(format!("  caller: {}", c));
+    }
+    if show_extras {
+        for (k, v) in &row.extras {
+            lines.push(format!("  {}: {}", k, value_to_string(v)));
+        }
+    }
+    for cont in &row.continuation_lines {
+        lines.push(format!("    {}", cont));
+    }
+    lines
+}
+
+fn render_status(f: &mut Frame, app: &App, area: Rect) {
+    let live_indicator = if app.paused {
+        Span::styled("⏸ PAUSED", Style::default().fg(Color::Yellow))
+    } else {
+        Span::styled("● LIVE", Style::default().fg(Color::LightGreen))
+    };
+
+    let new_notice = if app.new_count > 0 {
+        format!(" ↓ {} new  ", app.new_count)
+    } else {
+        String::new()
+    };
+
+    let row_info = format!("row {}/{}", app.selected + 1, app.rows.len());
+
+    let left = format!(
+        "↑↓/wheel scroll · Enter expand · Space pause · End latest · q quit{}",
+        new_notice
+    );
+
+    let status = Line::from(vec![
+        Span::styled(left, Style::default().fg(Color::DarkGray)),
+        Span::raw("  "),
+        Span::styled(row_info, Style::default().fg(Color::DarkGray)),
+        Span::raw("  "),
+        live_indicator,
+    ]);
+
+    f.render_widget(Paragraph::new(status), area);
 }
 
 /// Placeholder for table mode entry point (implemented in Tasks 6-7).
