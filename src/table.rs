@@ -199,11 +199,11 @@ impl App {
 /// Returns ratatui fg+bg Style for a log level badge.
 fn level_style(lvl: &LogLevel) -> Style {
     match lvl {
-        LogLevel::Error => Style::default().fg(Color::LightRed).bg(Color::Red),
-        LogLevel::Warn  => Style::default().fg(Color::Yellow).bg(Color::Rgb(100, 70, 0)),
-        LogLevel::Info  => Style::default().fg(Color::LightGreen).bg(Color::Green),
-        LogLevel::Debug => Style::default().fg(Color::LightBlue).bg(Color::Blue),
-        LogLevel::Trace => Style::default().fg(Color::DarkGray).bg(Color::Black),
+        LogLevel::Error => Style::default().fg(Color::LightRed),
+        LogLevel::Warn  => Style::default().fg(Color::Yellow),
+        LogLevel::Info  => Style::default().fg(Color::LightGreen),
+        LogLevel::Debug => Style::default().fg(Color::LightBlue),
+        LogLevel::Trace => Style::default().fg(Color::DarkGray),
         LogLevel::Unknown(_) => Style::default(),
     }
 }
@@ -401,7 +401,7 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let left = format!(
-        "↑↓/wheel scroll · Enter expand · Space pause · End latest · q quit{}",
+        "↑↓/wheel scroll · Enter expand · Space pause · End latest · q/Ctrl+C/Ctrl+D quit{}",
         new_notice
     );
 
@@ -420,7 +420,6 @@ pub enum AppEvent {
     LogLine(ClassifiedLine),
     RawLine(String),
     Eof,
-    Term(Event),
 }
 
 /// Handle a terminal event. Returns false if the app should quit.
@@ -429,6 +428,7 @@ pub fn handle_event(app: &mut App, event: Event) -> bool {
         Event::Key(KeyEvent { code, modifiers, .. }) => match code {
             KeyCode::Char('q') | KeyCode::Char('Q') => return false,
             KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return false,
+            KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => return false,
             KeyCode::Up   => app.scroll_up(),
             KeyCode::Down => app.scroll_down(),
             KeyCode::End  => app.jump_to_end(),
@@ -465,10 +465,11 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
 
     let mut app = App::new(config, show_extras, size.width, visible_height);
 
-    let (tx, rx) = mpsc::channel::<AppEvent>();
+    let (tx_log, rx_log) = mpsc::channel::<AppEvent>();
+    let (tx_term, rx_term) = mpsc::channel::<Event>();
 
     // Stdin reader thread
-    let tx_log = tx.clone();
+    let tx_logs = tx_log.clone();
     let cfg = config.clone();
     thread::spawn(move || {
         let stdin = io::stdin();
@@ -480,21 +481,20 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
                 }
                 ParseResult::Raw { line, .. } => AppEvent::RawLine(line),
             };
-            if tx_log.send(ev).is_err() {
+            if tx_logs.send(ev).is_err() {
                 break;
             }
         }
-        let _ = tx_log.send(AppEvent::Eof);
+        let _ = tx_logs.send(AppEvent::Eof);
     });
 
     // Terminal event thread
-    let tx_term = tx;
     thread::spawn(move || {
         loop {
             match event::poll(std::time::Duration::from_millis(50)) {
                 Ok(true) => {
                     if let Ok(ev) = event::read() {
-                        if tx_term.send(AppEvent::Term(ev)).is_err() {
+                        if tx_term.send(ev).is_err() {
                             break;
                         }
                     }
@@ -515,27 +515,62 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
         while running {
             terminal.draw(|f| render_ui(f, &app))?;
 
-            match rx.recv_timeout(std::time::Duration::from_millis(16)) {
-                Ok(AppEvent::LogLine(line)) => app.push_row(line),
-                Ok(AppEvent::RawLine(raw)) => {
-                    app.push_row(ClassifiedLine {
-                        level: None,
-                        timestamp: None,
-                        message: Some(raw),
-                        trace_id: None,
-                        caller: None,
-                        extras: vec![],
-                        continuation_lines: vec![],
-                    });
+            // Always process terminal input first to keep UI responsive under high log throughput.
+            while let Ok(ev) = rx_term.try_recv() {
+                if !handle_event(&mut app, ev) {
+                    running = false;
+                    break;
                 }
-                Ok(AppEvent::Eof) => {}
-                Ok(AppEvent::Term(ev)) => {
-                    if !handle_event(&mut app, ev) {
+            }
+            if !running {
+                break;
+            }
+
+            // Then process a bounded batch of log events each frame.
+            let mut processed_logs = 0usize;
+            while processed_logs < 256 {
+                match rx_log.try_recv() {
+                    Ok(AppEvent::LogLine(line)) => app.push_row(line),
+                    Ok(AppEvent::RawLine(raw)) => {
+                        app.push_row(ClassifiedLine {
+                            level: None,
+                            timestamp: None,
+                            message: Some(raw),
+                            trace_id: None,
+                            caller: None,
+                            extras: vec![],
+                            continuation_lines: vec![],
+                        });
+                    }
+                    Ok(AppEvent::Eof) => {}
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
                         running = false;
+                        break;
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+                processed_logs += 1;
+            }
+
+            // If there were no pending logs, block briefly to avoid a tight loop.
+            if processed_logs == 0 {
+                match rx_log.recv_timeout(std::time::Duration::from_millis(16)) {
+                    Ok(AppEvent::LogLine(line)) => app.push_row(line),
+                    Ok(AppEvent::RawLine(raw)) => {
+                        app.push_row(ClassifiedLine {
+                            level: None,
+                            timestamp: None,
+                            message: Some(raw),
+                            trace_id: None,
+                            caller: None,
+                            extras: vec![],
+                            continuation_lines: vec![],
+                        });
+                    }
+                    Ok(AppEvent::Eof) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+                }
             }
         }
         Ok(())
