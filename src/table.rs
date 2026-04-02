@@ -312,8 +312,17 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 let max_w = app.col_widths.width_of(col) as usize;
                 let raw = cell_value(col, row);
-                let text = if *col == Column::Message && !is_expanded {
-                    truncate(&raw, max_w)
+                let text = if *col == Column::Message {
+                    if is_expanded {
+                        let detail = build_detail_lines(row, app.show_extras_in_detail);
+                        if detail.is_empty() {
+                            raw
+                        } else {
+                            format!("{}\n{}", raw, detail.join("\n"))
+                        }
+                    } else {
+                        truncate(&raw, max_w)
+                    }
                 } else {
                     raw
                 };
@@ -380,7 +389,11 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
-    let row_info = format!("row {}/{}", app.selected + 1, app.rows.len());
+    let row_info = if app.rows.is_empty() {
+        "row 0/0".to_string()
+    } else {
+        format!("row {}/{}", app.selected + 1, app.rows.len())
+    };
 
     let left = format!(
         "↑↓/wheel scroll · Enter expand · Space pause · End latest · q quit{}",
@@ -487,45 +500,48 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
         }
     });
 
-    // Main render loop
-    let mut running = true;
-    while running {
-        terminal.draw(|f| render_ui(f, &app))?;
+    // Main render loop — extracted so teardown always runs
+    let result = (|| {
+        let mut running = true;
+        while running {
+            terminal.draw(|f| render_ui(f, &app))?;
 
-        match rx.recv_timeout(std::time::Duration::from_millis(16)) {
-            Ok(AppEvent::LogLine(line)) => app.push_row(line),
-            Ok(AppEvent::RawLine(raw)) => {
-                app.push_row(ClassifiedLine {
-                    level: None,
-                    timestamp: None,
-                    message: Some(raw),
-                    trace_id: None,
-                    caller: None,
-                    extras: vec![],
-                    continuation_lines: vec![],
-                });
-            }
-            Ok(AppEvent::Eof) => { /* stdin closed; keep showing until user quits */ }
-            Ok(AppEvent::Term(ev)) => {
-                if !handle_event(&mut app, ev) {
-                    running = false;
+            match rx.recv_timeout(std::time::Duration::from_millis(16)) {
+                Ok(AppEvent::LogLine(line)) => app.push_row(line),
+                Ok(AppEvent::RawLine(raw)) => {
+                    app.push_row(ClassifiedLine {
+                        level: None,
+                        timestamp: None,
+                        message: Some(raw),
+                        trace_id: None,
+                        caller: None,
+                        extras: vec![],
+                        continuation_lines: vec![],
+                    });
                 }
+                Ok(AppEvent::Eof) => {}
+                Ok(AppEvent::Term(ev)) => {
+                    if !handle_event(&mut app, ev) {
+                        running = false;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
         }
-    }
+        Ok(())
+    })();
 
-    // --- Terminal teardown ---
-    disable_raw_mode()?;
-    execute!(
+    // Always restore terminal, regardless of result
+    let _ = disable_raw_mode();
+    let _ = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    );
+    let _ = terminal.show_cursor();
 
-    Ok(())
+    result
 }
 
 #[cfg(test)]
