@@ -105,5 +105,7 @@ fn main() {
             }
         };
         writeln!(out, "{}", rendered).ok();
+        // Flush after every line so tail -f output appears immediately
+        out.flush().ok();
     }
 }

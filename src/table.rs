@@ -932,9 +932,10 @@ pub fn handle_event(app: &mut App, event: Event) -> bool {
 }
 
 pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
-    use crate::reader::LineReader;
+    use crate::reader::LogicalLine;
     use crate::parser::{parse_line, ParseResult};
     use crate::classifier::classify;
+    use regex::Regex;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -949,21 +950,88 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
 
     let (tx_log, rx_log) = mpsc::channel::<AppEvent>();
 
+    // Thread 1: raw stdin reader → sends raw lines to raw_rx.
+    // Runs independently so crossterm and the assembler never share the stdin handle.
+    let (raw_tx, raw_rx) = mpsc::channel::<Option<String>>();
+    thread::spawn(move || {
+        use io::BufRead;
+        let stdin  = io::stdin();
+        let locked = stdin.lock();
+        let reader = io::BufReader::new(locked);
+        for line_result in reader.lines() {
+            match line_result {
+                Ok(line) => { if raw_tx.send(Some(line)).is_err() { break; } }
+                Err(_)   => break,
+            }
+        }
+        let _ = raw_tx.send(None); // signal EOF
+    });
+
+    // Thread 2: logical-line assembler with 100 ms timeout flush.
+    // The timeout ensures that the last (pending) line is always emitted
+    // within 100 ms even if no subsequent line arrives (tail -f style streaming).
     let tx_logs = tx_log.clone();
     let cfg = config.clone();
     thread::spawn(move || {
-        let stdin  = io::stdin();
-        let reader = LineReader::new(stdin.lock(), &cfg.multiline);
-        for logical_line in reader {
-            let ev = match parse_line(&logical_line.main, logical_line.continuations) {
+        let continuation_re: Option<Regex> = if cfg.multiline.enabled {
+            Regex::new(&cfg.multiline.continuation_pattern).ok()
+        } else {
+            None
+        };
+        let multiline_enabled = cfg.multiline.enabled;
+
+        let is_cont = |line: &str| -> bool {
+            if !multiline_enabled { return false; }
+            match &continuation_re {
+                Some(re) => re.is_match(line),
+                None     => !line.trim_start().starts_with('{'),
+            }
+        };
+
+        let make_event = |p: LogicalLine| -> AppEvent {
+            match parse_line(&p.main, p.continuations) {
                 ParseResult::Json(parsed) => AppEvent::LogLine(classify(parsed, &cfg)),
                 ParseResult::Raw { line, .. } => AppEvent::RawLine(line),
-            };
-            if tx_logs.send(ev).is_err() {
-                break;
+            }
+        };
+
+        let mut pending: Option<LogicalLine> = None;
+        let flush_timeout = std::time::Duration::from_millis(100);
+
+        loop {
+            match raw_rx.recv_timeout(flush_timeout) {
+                // New raw line arrived
+                Ok(Some(line)) => {
+                    if line.is_empty() { continue; }
+                    if is_cont(&line) {
+                        if let Some(ref mut p) = pending {
+                            p.continuations.push(line);
+                        } else {
+                            pending = Some(LogicalLine { main: line, continuations: vec![] });
+                        }
+                    } else {
+                        let prev = pending.replace(LogicalLine { main: line, continuations: vec![] });
+                        if let Some(p) = prev {
+                            if tx_logs.send(make_event(p)).is_err() { break; }
+                        }
+                    }
+                }
+                // EOF or raw reader disconnected — flush pending and exit
+                Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    if let Some(p) = pending.take() {
+                        let _ = tx_logs.send(make_event(p));
+                    }
+                    let _ = tx_logs.send(AppEvent::Eof);
+                    break;
+                }
+                // Timeout: no new line in 100 ms → flush pending immediately
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(p) = pending.take() {
+                        if tx_logs.send(make_event(p)).is_err() { break; }
+                    }
+                }
             }
         }
-        let _ = tx_logs.send(AppEvent::Eof);
     });
 
     let result = (|| {
