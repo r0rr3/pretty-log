@@ -955,16 +955,23 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
     let (raw_tx, raw_rx) = mpsc::channel::<Option<String>>();
     thread::spawn(move || {
         use io::BufRead;
-        let stdin  = io::stdin();
-        let locked = stdin.lock();
-        let reader = io::BufReader::new(locked);
-        for line_result in reader.lines() {
-            match line_result {
-                Ok(line) => { if raw_tx.send(Some(line)).is_err() { break; } }
-                Err(_)   => break,
+        let stdin = io::stdin();
+        let mut locked = stdin.lock(); // single BufReader — no double-buffering
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match locked.read_line(&mut buf) {
+                Ok(0) => { let _ = raw_tx.send(None); break; } // EOF
+                Ok(_) => {
+                    let line = buf
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .to_string();
+                    if raw_tx.send(Some(line)).is_err() { break; }
+                }
+                Err(_) => { let _ = raw_tx.send(None); break; }
             }
         }
-        let _ = raw_tx.send(None); // signal EOF
     });
 
     // Thread 2: logical-line assembler with 100 ms timeout flush.
@@ -1035,50 +1042,78 @@ pub fn run_table_mode(config: &Config, show_extras: bool) -> io::Result<()> {
     });
 
     let result = (|| {
-        let mut running = true;
+        use std::time::{Duration, Instant};
+        const FRAME_BUDGET: Duration = Duration::from_millis(16); // ~60 fps cap
+
+        let mut running     = true;
+        let mut needs_draw  = true; // always draw first frame
+
+        // Helper: push a raw-string row
+        macro_rules! push_raw {
+            ($app:expr, $raw:expr) => {
+                $app.push_row(ClassifiedLine {
+                    level: None, timestamp: None, message: Some($raw),
+                    trace_id: None, caller: None, extras: vec![],
+                    continuation_lines: vec![],
+                })
+            };
+        }
+
         while running {
-            terminal.draw(|f| render_ui(f, &app))?;
+            let frame_start = Instant::now();
 
-            match event::poll(std::time::Duration::from_millis(1)) {
-                Ok(true) => {
-                    if let Ok(ev) = event::read() {
-                        if !handle_event(&mut app, ev) {
-                            running = false;
-                            continue;
-                        }
-                    }
-                }
-                Ok(false) => {}
-                Err(_)    => {}
-            }
-
+            // ── 1. Drain all immediately available log events ──────────────────
             let mut processed = 0usize;
             while processed < 256 {
                 match rx_log.try_recv() {
-                    Ok(AppEvent::LogLine(line)) => app.push_row(line),
-                    Ok(AppEvent::RawLine(raw))  => app.push_row(ClassifiedLine {
-                        level: None, timestamp: None, message: Some(raw),
-                        trace_id: None, caller: None, extras: vec![],
-                        continuation_lines: vec![],
-                    }),
-                    Ok(AppEvent::Eof) => {}
+                    Ok(AppEvent::LogLine(line)) => { app.push_row(line); needs_draw = true; }
+                    Ok(AppEvent::RawLine(raw))  => { push_raw!(app, raw); needs_draw = true; }
+                    Ok(AppEvent::Eof)           => {}
                     Err(mpsc::TryRecvError::Empty)        => break,
                     Err(mpsc::TryRecvError::Disconnected) => { running = false; break; }
                 }
                 processed += 1;
             }
 
-            if processed == 0 {
-                match rx_log.recv_timeout(std::time::Duration::from_millis(16)) {
-                    Ok(AppEvent::LogLine(line)) => app.push_row(line),
-                    Ok(AppEvent::RawLine(raw))  => app.push_row(ClassifiedLine {
-                        level: None, timestamp: None, message: Some(raw),
-                        trace_id: None, caller: None, extras: vec![],
-                        continuation_lines: vec![],
-                    }),
-                    Ok(AppEvent::Eof) => {}
-                    Err(mpsc::RecvTimeoutError::Timeout)      => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+            // ── 2. Render only when something changed ──────────────────────────
+            if needs_draw {
+                terminal.draw(|f| render_ui(f, &app))?;
+                needs_draw = false;
+            }
+
+            // ── 3. Wait out the rest of the frame budget ───────────────────────
+            // This prevents spinning and caps CPU to ~60 fps even on Windows where
+            // event::poll() may return Err immediately for piped stdin.
+            let remaining = FRAME_BUDGET.saturating_sub(frame_start.elapsed());
+            if remaining.is_zero() { continue; }
+
+            match event::poll(remaining) {
+                Ok(true) => {
+                    // Keyboard / mouse event
+                    if let Ok(ev) = event::read() {
+                        if !handle_event(&mut app, ev) {
+                            running = false;
+                        }
+                        needs_draw = true;
+                    }
+                }
+                Ok(false) => {
+                    // Timed out normally — nothing to do, loop again
+                }
+                Err(_) => {
+                    // event::poll failed (e.g. piped stdin on Windows has no console
+                    // handle). Use the log channel as the sleep so we still wake up
+                    // promptly when new log data arrives.
+                    let leftover = FRAME_BUDGET.saturating_sub(frame_start.elapsed());
+                    if !leftover.is_zero() {
+                        match rx_log.recv_timeout(leftover) {
+                            Ok(AppEvent::LogLine(line)) => { app.push_row(line); needs_draw = true; }
+                            Ok(AppEvent::RawLine(raw))  => { push_raw!(app, raw); needs_draw = true; }
+                            Ok(AppEvent::Eof)           => {}
+                            Err(mpsc::RecvTimeoutError::Timeout)      => {}
+                            Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+                        }
+                    }
                 }
             }
         }
