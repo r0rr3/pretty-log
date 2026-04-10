@@ -178,14 +178,15 @@ fn colorize_level(lvl: &LogLevel, s: &str) -> String {
 
 pub fn shorten_timestamp(ts: &str) -> String {
     if let Some(t_pos) = ts.find('T') {
+        let date_part = &ts[..t_pos];
         let after_t = &ts[t_pos + 1..];
         let time_part = after_t.split('.').next().unwrap_or(after_t);
         let time_part = time_part.split('Z').next().unwrap_or(time_part);
-        if time_part.len() >= 8 {
-            return time_part[..8].to_string();
+        if date_part.len() >= 10 && time_part.len() >= 8 {
+            return format!("{} {}", &date_part[..10], &time_part[..8]);
         }
     }
-    ts.chars().take(19).collect()
+    ts.chars().take(20).collect()
 }
 
 fn contains_error_keyword(msg: &str) -> bool {
@@ -298,8 +299,23 @@ mod tests {
 
     #[test]
     fn shorten_timestamp_extracts_time() {
-        assert_eq!(shorten_timestamp("2024-01-01T10:23:45Z"), "10:23:45");
-        assert_eq!(shorten_timestamp("2024-01-01T10:23:45.123Z"), "10:23:45");
+        assert_eq!(shorten_timestamp("2024-01-01T10:23:45Z"), "2024-01-01 10:23:45");
+        assert_eq!(shorten_timestamp("2024-01-01T10:23:45.123Z"), "2024-01-01 10:23:45");
+    }
+
+    #[test]
+    fn render_includes_full_timestamp() {
+        let line = crate::classifier::ClassifiedLine {
+            level: Some(crate::classifier::LogLevel::Info),
+            timestamp: Some("2026-04-01T10:00:00Z".to_string()),
+            message: Some("ok".to_string()),
+            trace_id: None,
+            caller: None,
+            extras: vec![],
+            continuation_lines: vec![],
+        };
+        let out = render(&line, &Config::default(), true);
+        assert!(out.contains("2026-04-01 10:00:00"));
     }
 
     #[test]
