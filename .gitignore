@@ -15,6 +15,13 @@
 .cargo/
 docs/
 
+# Internal documentation
+BUILDING.md
+CI_CD.md
+HOMEBREW_SETUP.md
+QUICK_RELEASE.md
+VERSIONING.md
+
 # Local log files
 app.log
 table-test.log
