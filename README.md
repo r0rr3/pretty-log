@@ -5,7 +5,7 @@ A fast, streaming log prettifier for JSON logs. Pipe from `tail -f` for live col
 **[中文版本](README.zh-CN.md)** | **[English](README.md)**
 
 [![Rust](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ## What you get
 
@@ -66,6 +66,8 @@ Output:
   main.handler(...)
 ```
 
+![Normal mode](assets/common_mode.jpg)
+
 ## Options
 
 | Flag | Description |
@@ -98,6 +100,8 @@ Activated with `-t`. Displays logs in a full-terminal interactive table with wra
 **Search** uses KMP for fast case-insensitive matching across message and all extra fields. Matches are highlighted inline.
 
 When scrolling up during a live stream, new logs continue buffering. The status bar shows `↓ N new`. Press `G` or `End` to jump back to the latest.
+
+![Table mode](assets/table_mode.jpg)
 
 ## Configuration
 
@@ -193,7 +197,7 @@ cargo test
 
 ## License
 
-MIT
+GPL-3.0
 
 ---
 

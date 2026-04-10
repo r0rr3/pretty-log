@@ -5,7 +5,7 @@
 **[中文版本](README.zh-CN.md)** | **[English](README.md)**
 
 [![Rust](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ## 特性
 
@@ -66,6 +66,8 @@ main.handler(...)
   main.handler(...)
 ```
 
+![普通模式](assets/common_mode.jpg)
+
 ## CLI 参数
 
 | 参数 | 短形式 | 说明 |
@@ -98,6 +100,8 @@ main.handler(...)
 **搜索**采用 KMP 算法，大小写不敏感，在消息和所有额外字段中匹配，结果高亮显示。
 
 实时滚动期间向上翻页后，新日志持续缓冲。状态栏显示 `↓ N new`，按 `G` 或 `End` 跳回最新。
+
+![表格模式](assets/table_mode.jpg)
 
 ## 配置
 
@@ -193,7 +197,7 @@ cargo test
 
 ## 许可证
 
-MIT — 详见 [LICENSE](LICENSE)
+GPL-3.0 — 详见 [LICENSE](LICENSE)
 
 ---
 

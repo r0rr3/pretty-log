@@ -2,6 +2,7 @@
 name = "pretty"
 version = "0.0.8"
 edition = "2021"
+license = "GPL-3.0-only"
 
 [[bin]]
 name = "pretty"
