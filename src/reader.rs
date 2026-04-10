@@ -100,6 +100,29 @@ impl<R: BufRead> Iterator for LineReader<R> {
     }
 }
 
+/// Build a closure that tests whether a line is a multiline continuation.
+/// Compiles the regex once at construction time so callers pay no per-line
+/// compilation cost.
+pub fn make_continuation_checker(
+    config: &MultilineConfig,
+) -> impl Fn(&str) -> bool + Send + 'static {
+    let enabled = config.enabled;
+    let re: Option<Regex> = if enabled {
+        Regex::new(&config.continuation_pattern).ok()
+    } else {
+        None
+    };
+    move |line: &str| -> bool {
+        if !enabled {
+            return false;
+        }
+        match &re {
+            Some(r) => r.is_match(line),
+            None => !line.trim_start().starts_with('{'),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
