@@ -1,21 +1,21 @@
 # pretty-log
 
-A fast, streaming log prettifier for JSON logs. Pipe from `tail -f` for live colored output, or use `-t` for a full-terminal interactive table.
+Pipe your JSON logs in, get colored human-readable output back. Works with `tail -f` for live streams, or `-t` for a full-terminal table view.
 
 **[中文版本](README.zh-CN.md)** | **[English](README.md)**
 
 [![Rust](https://img.shields.io/badge/language-Rust-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-## What you get
+## Features
 
-- Streaming JSON parsing — reads from stdin line by line, no buffering delay
-- ANSI colors — auto-detects terminal and colorizes by log level
-- Multi-line support — groups stack traces with their parent log entry
-- Sensible defaults — works immediately with common field names (`level`, `time`, `msg`, `trace_id`)
-- Interactive table mode — full-terminal TUI with search, scrolling, and detail panel
-- YAML config — customize field names and behaviors if your logs use different keys
-- Single static binary — ~5 MB, no runtime dependencies
+- Streaming JSON parsing — reads line by line, no buffering delay
+- ANSI colors — auto-detected from the terminal, colorized by log level
+- Multi-line support — stack traces group with their parent log entry
+- Zero config needed — common field names work out of the box (`level`, `time`, `msg`, `trace_id`)
+- Interactive table mode with search, scrolling, and a detail panel
+- YAML config for remapping field names if your logs use different keys
+- Single static binary, ~5 MB, no runtime dependencies
 
 ## Install
 
@@ -42,7 +42,6 @@ cargo build --release
 tail -f app.log | pretty              # live stream with colors
 cat app.log | pretty                  # pipe a file
 tail -f app.log | pretty -t           # interactive table mode
-tail -f app.log | pretty -t -x        # table mode + extras in detail panel
 cat app.log | pretty --no-color | grep ERROR   # pipe-friendly output
 ```
 
@@ -75,15 +74,14 @@ Output:
 | `-s`, `--expand` | Expand nested JSON field values |
 | `-e`, `--highlight-errors` | Highlight error keywords in message |
 | `-t`, `--table` | Enable interactive table view |
-| `-x`, `--extras` | Show extra fields in detail panel (table mode only) |
 | `--config <path>` | Path to config file |
 | `--no-color` | Disable ANSI color output |
 
 ## Table Mode
 
-Activated with `-t`. Displays logs in a full-terminal interactive table with wrapping messages, a detail panel, and live search.
+Run with `-t`. Logs fill the terminal in a scrollable table — long messages wrap, a detail panel shows the full entry, and search works on everything.
 
-**Key bindings:**
+Key bindings:
 
 | Key | Action |
 |-----|--------|
@@ -97,9 +95,9 @@ Activated with `-t`. Displays logs in a full-terminal interactive table with wra
 | `Esc` | Clear search |
 | `q` | Quit |
 
-**Search** uses KMP for fast case-insensitive matching across message and all extra fields. Matches are highlighted inline.
+Search uses KMP for fast case-insensitive matching across message and all fields, with matches highlighted inline.
 
-When scrolling up during a live stream, new logs continue buffering. The status bar shows `↓ N new`. Press `G` or `End` to jump back to the latest.
+Scroll up during a live stream and new logs keep buffering in the background. The status bar shows `↓ N new` — press `G` or `End` to catch up.
 
 ![Table mode](assets/table_mode.jpg)
 
@@ -128,7 +126,6 @@ multiline:
 
 table:
   columns: [time, level, message]
-  show_extras_in_detail: false
 ```
 
 ## Default field names
@@ -161,7 +158,7 @@ stdin
                  └─ parser → classifier → renderer → stdout
 ```
 
-The 50ms timeout ensures the last log line of each burst is always displayed promptly, which is what makes `tail -f` work correctly.
+The 50ms timeout ensures the last line of each burst is flushed promptly — that's what makes `tail -f` work without lag.
 
 ## Project structure
 
@@ -191,9 +188,9 @@ cargo test
 
 ## Known limits
 
-- JSON objects only — arrays at the top level are passed through as raw text
-- No built-in filtering — pipe to `grep` or `jq` instead
-- Regex in config that fail to compile fall back to the default pattern
+- JSON objects only — top-level arrays pass through as raw text
+- No built-in filtering — pipe to `grep` or `jq`
+- Invalid regex in config falls back to the default pattern
 
 ## License
 
