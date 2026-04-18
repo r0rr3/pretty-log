@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "pretty"
-version = "0.0.8"
+version = "0.1.1"
 dependencies = [
  "assert_cmd",
  "atty",

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-04-19
+
+### Fixed
+
+- **Table mode blank screen on oversize rows**: when a single log row's rendered
+  height (wrapped message + detail pairs) exceeded the visible area, the render
+  loop skipped every row and the screen went blank.  `row_height` is now capped
+  at the visible height, long rows are truncated with a `… (N more lines)`
+  indicator, and the renderer always shows at least one row as a safety net.
+  `scroll_offset_for_bottom` also no longer scrolls past the selected row when
+  that row alone is taller than the viewport.
+
 ## [0.0.8] - 2026-04-10
 
 ### Fixed
