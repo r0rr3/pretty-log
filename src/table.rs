@@ -331,7 +331,13 @@ impl App {
         loop {
             let rh = self.row_height(idx) as usize;
             if h + rh > vh {
-                // idx row no longer fits — start from idx+1
+                // idx row no longer fits — start from idx+1. But if the very
+                // first iteration already overflows, the row itself is taller
+                // than the viewport; show it from the top rather than skipping
+                // past it (which would leave the selected row off-screen).
+                if idx == last_row {
+                    return last_row;
+                }
                 return idx + 1;
             }
             h += rh;
@@ -382,7 +388,14 @@ impl App {
             _ => 1,
         };
         let detail_lines = compact_line_count(&self.rows[idx].detail_pairs, msg_w);
-        (msg_lines + detail_lines) as u16
+        let total = (msg_lines + detail_lines) as u16;
+        // Cap row height so an oversize row cannot exceed the visible area —
+        // otherwise the render loop would skip it entirely (empty screen).
+        if self.visible_height == 0 {
+            total
+        } else {
+            total.min(self.visible_height)
+        }
     }
 
     fn row_at_screen_y(&self, y: u16) -> Option<usize> {
@@ -594,6 +607,11 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
         consumed_height += h;
         idx += 1;
     }
+    // Fallback: ensure at least one row is shown even if its (capped) height
+    // somehow still exceeds the area — ratatui will clip it.
+    if visible_indices.is_empty() && app.scroll_offset < app.rows.len() {
+        visible_indices.push(app.scroll_offset);
+    }
 
     let rows: Vec<Row> = visible_indices.iter().map(|abs_idx| {
         let row     = &app.rows[*abs_idx].line;
@@ -609,6 +627,8 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default()
         };
+
+        let capped_h = app.row_height(*abs_idx) as usize;
 
         let cells: Vec<Cell> = app.columns.iter().map(|col| {
             if *col == Column::Level {
@@ -642,6 +662,18 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
                     value_style,
                 ));
 
+                // Truncate to capped height; last line becomes a "… (N more lines)"
+                // indicator so the user knows content was clipped. Message is in
+                // front of details, so this naturally favors keeping message content.
+                if capped_h > 0 && lines.len() > capped_h {
+                    let hidden = lines.len() - (capped_h - 1);
+                    lines.truncate(capped_h - 1);
+                    lines.push(Line::from(Span::styled(
+                        format!("… ({} more lines)", hidden),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+
                 let text = Text::from(lines);
                 Cell::from(text).style(base_style)
             } else {
@@ -653,20 +685,7 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect) {
             }
         }).collect();
 
-        let detail_line_count = compact_line_count(
-            detail_pairs,
-            app.col_widths.width_of(&Column::Message).max(16) as usize,
-        );
-        let msg_lines = match &row.message {
-            Some(s) if !s.is_empty() => {
-                let w = app.col_widths.width_of(&Column::Message).max(16) as usize;
-                wrap_line_count(s.chars().count(), w)
-            }
-            _ => 1,
-        };
-        let row_h = (msg_lines + detail_line_count) as u16;
-
-        Row::new(cells).style(base_style).height(row_h)
+        Row::new(cells).style(base_style).height(capped_h as u16)
     }).collect();
 
     let table = Table::new(rows, widths);
@@ -1280,6 +1299,43 @@ mod tests {
         // Should wrap to first match (row 0)
         assert_eq!(app.search.current, 0);
         assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn row_height_is_capped_at_visible_height() {
+        let config = Config::default();
+        // visible_height = 5
+        let mut app = App::new(&config, false, 100, 5);
+        // A message long enough to wrap into many lines
+        let long = "x".repeat(10_000);
+        app.push_row(make_row(long));
+        // Raw height would be huge; capped to 5
+        assert_eq!(app.row_height(0), 5);
+    }
+
+    #[test]
+    fn scroll_offset_for_bottom_handles_oversize_row() {
+        let config = Config::default();
+        let mut app = App::new(&config, false, 100, 5);
+        // First two normal rows, then an oversize row as the last/selected
+        app.push_row(make_row("short a".into()));
+        app.push_row(make_row("short b".into()));
+        app.push_row(make_row("x".repeat(10_000)));
+        // selected is the oversize row; scroll_offset must land on it, not past it
+        assert_eq!(app.selected, 2);
+        assert_eq!(app.scroll_offset, 2);
+    }
+
+    #[test]
+    fn render_fallback_shows_selected_when_oversize() {
+        // Sanity: even for an oversize single row, the render helper would pick it up
+        // via the same scroll_offset = selected path.
+        let config = Config::default();
+        let mut app = App::new(&config, false, 100, 3);
+        app.push_row(make_row("x".repeat(10_000)));
+        assert_eq!(app.scroll_offset, 0);
+        // Capped to visible_height
+        assert_eq!(app.row_height(0), 3);
     }
 
     fn make_row(msg: String) -> ClassifiedLine {
